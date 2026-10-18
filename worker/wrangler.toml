@@ -1,0 +1,30 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
+name = "chief-status"
+main = "src/index.ts"
+compatibility_date = "2026-10-18"
+compatibility_flags = [ "nodejs_compat" ]
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+# The password agents send is NOT written here.
+# Set it with: npx wrangler secret put STATUS_TOKEN
+[secrets]
+required = [ "STATUS_TOKEN" ]
+
+# Names created the first time the feed is read. Later posts can add more.
+[vars]
+BOTS = "Agent1,Agent2"
+
+[[kv_namespaces]]
+binding = "STATUS"
+# Replace this with the id printed by: npx wrangler kv namespace create STATUS
+id = "00000000000000000000000000000001"

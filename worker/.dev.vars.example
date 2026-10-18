@@ -1,0 +1,3 @@
+# Copy this file to .dev.vars for local development.
+# .dev.vars is not committed. The real password is a Worker secret.
+STATUS_TOKEN=replace-with-a-long-password
