@@ -652,19 +652,124 @@ async function main() {
 		const asked = await postStatus({ bot: "AskBot", status: "needs_input", task: "which logo?" });
 		assert(asked.status === 200, `needs_input post ${asked.status} ${JSON.stringify(asked.body)}`);
 		assert(asked.body.bot.status === "needs_input", "needs_input should be stored");
+		assert(asked.body.bot.approval === false, "needs_input without approval stays false");
 		assert(asked.body.bot.started_at !== "2026-10-18T09:00:00.000Z", "needs_input should start a new clock");
 		assert(Date.now() - Date.parse(asked.body.bot.started_at) < 60000, "needs_input clock should be now");
 		const askedAgain = await postStatus({ bot: "AskBot", status: "needs_input", task: "still waiting" });
 		assert(askedAgain.body.bot.started_at === asked.body.bot.started_at, "a repeat needs_input keeps its clock");
+		assert(askedAgain.body.bot.approval === false, "omitting approval on a repeat clears it");
 		const afterNeeds = await request(`${base}/status`);
 		assert(afterNeeds.body.today.length === jobsBeforeNeeds, "needs_input must not record a job");
 		assert(
-			afterNeeds.body.bots.some((bot) => bot.bot === "AskBot" && bot.status === "needs_input"),
-			"GET should list needs_input",
+			afterNeeds.body.bots.some((bot) => bot.bot === "AskBot" && bot.status === "needs_input" && bot.approval === false),
+			"GET should list needs_input with approval false",
 		);
+
+		const approved = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "approve the homepage copy",
+			approval: true,
+		});
+		assert(approved.status === 200, `approval post ${approved.status} ${JSON.stringify(approved.body)}`);
+		assert(approved.body.bot.approval === true, "approval true should be stored with needs_input");
+		assert(approved.body.bot.status === "needs_input", "approval does not change the status");
+		const approvedGet = await request(`${base}/status`);
+		const approvedRow = approvedGet.body.bots.find((bot) => bot.bot === "AskBot");
+		assert(approvedRow && approvedRow.approval === true, "GET /status should return approval");
+		assert(approvedRow.task === "approve the homepage copy", "GET should return the approval task");
+		const approvedLive = await liveSnapshot(`${base.replace("http", "ws")}/status/live`);
+		const liveApproved = approvedLive[0].bots.find((bot) => bot.bot === "AskBot");
+		assert(liveApproved && liveApproved.approval === true, "the live feed should return approval");
+
+		const explicitNo = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "which font?",
+			approval: false,
+		});
+		assert(explicitNo.body.bot.approval === false, "approval false should be stored");
+		const omittedAgain = await postStatus({ bot: "AskBot", status: "needs_input", task: "which font?" });
+		assert(omittedAgain.body.bot.approval === false, "leaving approval out means false");
+		const nullApproval = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "which font?",
+			approval: null,
+		});
+		assert(nullApproval.status === 200, `null approval ${nullApproval.status}`);
+		assert(nullApproval.body.bot.approval === false, "null approval means false");
+
+		const badApproval = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "which font?",
+			approval: "yes",
+		});
+		assert(badApproval.status === 400, `non-boolean approval should be 400, was ${badApproval.status}`);
+		assert(String(badApproval.body.error).includes("approval"), "the error should mention approval");
+
+		const ignoredApproval = await postStatus({
+			bot: "AskBot",
+			status: "working",
+			task: "continuing",
+			approval: true,
+		});
+		assert(ignoredApproval.status === 200, `approval on working ${ignoredApproval.status}`);
+		assert(ignoredApproval.body.bot.approval === false, "approval is only stored for needs_input");
+		assert(ignoredApproval.body.bot.status === "working", "the working post should still apply");
+
+		const approvedAgain = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "approve the footer",
+			approval: true,
+		});
+		assert(approvedAgain.body.bot.approval === true, "a later needs_input can set approval again");
+		const clearedApproval = await postStatus({ bot: "AskBot", status: "idle", task: "" });
+		assert(clearedApproval.body.bot.approval === false, "leaving needs_input clears approval");
+
 		const unknownStatus = await postStatus({ bot: "AskBot", status: "waiting", task: "" });
 		assert(unknownStatus.status === 400, `unknown status should be 400, was ${unknownStatus.status}`);
 		assert(String(unknownStatus.body.error).includes("needs_input"), "the error should list needs_input");
+
+		const scriptEnv = {
+			...process.env,
+			CHIEF_STATUS_URL: base,
+			CHIEF_STATUS_TOKEN: token,
+		};
+		const postedApproval = await exec(script, ["AskBot", "needs_input", "approve the homepage copy", "--approval"], {
+			env: scriptEnv,
+		});
+		assert(postedApproval.stdout.includes('"approval":true'), `script --approval output ${postedApproval.stdout}`);
+		const scriptedApproval = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "AskBot");
+		assert(scriptedApproval.status === "needs_input", "script --approval should post needs_input");
+		assert(scriptedApproval.approval === true, "script --approval should set approval");
+		assert(scriptedApproval.task === "approve the homepage copy", `script approval task was ${scriptedApproval.task}`);
+
+		const postedApprovalEnv = await exec(script, ["AskBot", "needs_input", "ship the footer?"], {
+			env: { ...scriptEnv, CHIEF_STATUS_APPROVAL: "1" },
+		});
+		assert(postedApprovalEnv.stdout.includes('"approval":true'), `script env approval output ${postedApprovalEnv.stdout}`);
+		const envApproval = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "AskBot");
+		assert(envApproval.approval === true && envApproval.task === "ship the footer?", "CHIEF_STATUS_APPROVAL=1 should set approval");
+
+		const postedPlainNeeds = await exec(script, ["AskBot", "needs_input", "which font?"], { env: scriptEnv });
+		assert(postedPlainNeeds.stdout.includes('"ok":true'), `plain needs_input script ${postedPlainNeeds.stdout}`);
+		const plainNeeds = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "AskBot");
+		assert(plainNeeds.approval === false, "needs_input without --approval should be approval false");
+		assert(plainNeeds.task === "which font?", `plain needs_input task was ${plainNeeds.task}`);
+
+		let approvalOnWorking = false;
+		try {
+			await exec(script, ["AskBot", "working", "nope", "--approval"], { env: scriptEnv });
+		} catch (error) {
+			approvalOnWorking = true;
+			const stderr = `${error.stderr || ""}\n${error.message || ""}`;
+			assert(stderr.includes("needs_input"), `script --approval on working said ${stderr}`);
+		}
+		assert(approvalOnWorking, "--approval with a status other than needs_input should fail");
+
 		await postStatus({ bot: "AskBot", status: "idle", task: "" });
 
 		// DELETE /status/<bot>: password required, removes the bot and its jobs, unknown is 404.

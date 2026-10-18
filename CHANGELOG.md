@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.5.0 — 2026-10-18
+
+In plain words:
+
+- **A bot that needs you now calls you over.** The moment a bot posts `needs_input`, the Mac shows a banner and speaks a line. The title is "<Bot> needs your approval" when the post sets `approval`, and "<Bot> needs you" otherwise. The banner body is the task line, so that line has to say exactly what is needed.
+- **It reminds you** until that bot posts a different state. The default is every 5 minutes. Settings can pick Off, 2, 10 or 15. Several waiting bots share one reminder.
+- **The menu bar cube shakes and changes colour** while anyone is waiting: a hard wiggle in bursts of about 0.6 seconds, and a smooth cycle through the preset colours. A **?** means a question, an **!** means an approval, and a count badge shows how many bots are waiting. An approval shakes a little harder, and its badge is red with a white number. Shake, Banner and Voice are on by default.
+- **Reduce Motion, or switching Shake off,** shows a still cube in your icon colour, with the same mark and count. No outlines.
+- **Click the banner** to open that bot's chat, the same lookup as clicking its row.
+- **If banners are refused,** the app stays quiet and Settings says so. Voice still speaks when Voice is on. Permission is asked the first time the app runs.
+- The feed accepts an optional `approval` boolean on a status post. It is stored and returned only as meaningful for `needs_input`. Older apps ignore it. `post-status.sh` takes `--approval` or `CHIEF_STATUS_APPROVAL=1`.
+- README, version and the Homebrew cask move to 1.5.0. The cask checksum is `REPLACE_WITH_SHA256` until the disk image is built. Nothing in 1.5.0 is released yet.
+
+Details:
+
+- Worker: `POST /status` accepts optional `approval` (a boolean). Omitted, null, or any status other than `needs_input` stores `false`. A non-boolean is `400`. `GET /status` and the live snapshot include `approval` on each bot. Existing rows gain the column with default `0`. `READ_TOKEN` is unchanged: tests in `worker/test/feed.test.mjs` still cover a missing token, a wrong token, the post password not counting as the read token, and `?token=` on the live feed only. New tests cover storing and returning `approval`, ignoring it on other statuses, the script flag, and the env var.
+- `worker/scripts/post-status.sh` accepts `needs_input "what is needed" --approval`. `CHIEF_STATUS_APPROVAL=1` (also `true`, `yes`, `on`) does the same on a `needs_input` post and is ignored for other statuses. `--approval` on another status exits with an error. The header says the task must say exactly what is needed.
+- App: a transition into `needs_input`, or a change of `approval` while waiting, speaks through `FailureSpeaker` (the same `NSSpeechSynthesizer` queue as "<Bot> task failed") and posts a `UNUserNotificationCenter` banner. The body is the task text. The notification's `userInfo` carries the bot name. A click opens that bot's chat via the feed link, then `links.json`. A grouped reminder opens the panel when more than one bot is waiting.
+- Reminders use one repeating timer. It stops when nobody is waiting, or when the interval is Off. The first snapshot after launch does not shout for a wait that was already there. The reminder still starts.
+- Menu bar: a waiting bot takes the cube, ahead of a failure. While that state is showing, `FaceAnimator` draws about 30 frames a second and stops that timer otherwise. The fill eases through `#F39C28`, `#E94347`, `#E85FA8`, `#8762F3`, `#3A86F4`, `#3BB5B0`, `#5ABF78`. The mark ink follows the fill. The badge is a solid fill with no stroke. Approval badge `#E5484D`, white digit. A question badge is `#1A1410` with a white digit on a light menu bar, and white with a dark digit on a dark menu bar. When nobody is waiting, a failure is still the red cube.
+- Reduce Motion is `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`, and the app observes `NSWorkspace.accessibilityDisplayOptionsDidChangeNotification`. The still cube uses the icon colour from Settings.
+- Settings keys in `com.chiefstatus.menubar`: `needsYouShake`, `needsYouBanner`, `needsYouVoice`, `needsYouReminderMinutes`. Missing keys mean on, and 5 minutes. The panel card says **approve** when `approval` is true.
+- `--render-preview` also writes `needs-you-frames-light.png`, `needs-you-frames-dark.png`, `needs-you-settings-light.png` and `needs-you-settings-dark.png`.
+- Version `1.5.0` (`CFBundleVersion` 6). User-Agent `ChiefStatus/1.5.0`. The cask URL follows the version. `sha256` is `REPLACE_WITH_SHA256`.
+
 ## v1.4.0 — 2026-10-19
 
 In plain words:

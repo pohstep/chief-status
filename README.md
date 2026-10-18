@@ -12,6 +12,7 @@
 <p align="center">
   <a href="#download-and-install"><b>Download</b></a> &nbsp;·&nbsp;
   <a href="#using-it"><b>Using it</b></a> &nbsp;·&nbsp;
+  <a href="#when-a-bot-needs-you"><b>Needs you</b></a> &nbsp;·&nbsp;
   <a href="#set-up-the-feed"><b>Set up the feed</b></a> &nbsp;·&nbsp;
   <a href="#teach-your-bots-to-report"><b>Set up your bots</b></a> &nbsp;·&nbsp;
   <a href="#read-token"><b>Read token</b></a> &nbsp;·&nbsp;
@@ -26,12 +27,13 @@
 
 ## What it does
 
-- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. It shows a **?** when a bot is waiting on you, and **404** when the only working bots have gone quiet. The working, **?** and **404** cubes use your icon colour (orange by default).
+- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. While a bot is waiting on you it shakes and cycles colour, with a **?** or an **!** and a count (see [When a bot needs you](#when-a-bot-needs-you)). It shows **404** when the only working bots have gone quiet. The working and **404** cubes, and the still needs-you cube, use your icon colour (orange by default).
 - **One panel for the whole team.** Click the cube and a frosted panel drops down. Bots that are working get their own orange card, longest-running first. A failed bot gets a red row, a finished one a green check.
 - **Every bot has its own colour.** Each bot's face is filled with its own colour, so you can tell them apart in a second. The bot picks the colour itself the first time it reports (see [Colours](#colours)).
 - **Real job times.** Each card shows how long the job has been running. **Finished today** lists every job that finished today and how long it took.
 - **Live.** A change shows up within a second or two, with no refresh button.
 - **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure is spoken aloud ("Chief task failed") and shows a macOS banner. It is off until you turn it on.
+- **Needs-you alert, on by default.** When a bot starts waiting, you get a banner and a spoken line, then a reminder until it posts something else. See [When a bot needs you](#when-a-bot-needs-you).
 - **Stale warning.** A bot that has said "working" for over an hour gets a **stale?** tag, which usually means it forgot to say it was done.
 - **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes moves to a black card, its face (still in the bot's own colour) shows **404**, and it says **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work.
 - **A bot waiting on you gets its own card.** A bot that posts `needs_input` (a question, an approval) gets an indigo card with a **?** face at the very top, labelled **needs you · 5m ago**. It never turns stale. The header counts it too.
@@ -62,7 +64,7 @@ There are three parts:
 
 ## Download and install
 
-1. Download `Chief-Status-1.4.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer.
+1. Download `Chief-Status-1.5.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer.
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
    - **macOS 15 Sequoia or newer:** click **Done**. Open **System Settings → Privacy & Security**, scroll down to *"Chief Status was blocked…"*, click **Open Anyway**, and type your Mac password.
@@ -72,7 +74,7 @@ There are three parts:
 5. Paste your feed address (from [Set up the feed](#set-up-the-feed)) and click **Save**. If you have no feed yet, click **No feed yet? Set one up**, or **Deploy to Cloudflare**.
 6. To have it start every time you log in, click the cube, open **Settings**, and turn on **Open at login**. You can also add it under **System Settings → General → Login Items**.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.4.0](CHANGELOG.md#v140--2026-10-19).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.5.0](CHANGELOG.md#v150--2026-10-18).
 
 Terminal users can install the same disk image with Homebrew. See [Install with Homebrew](#install-with-homebrew).
 
@@ -81,16 +83,10 @@ Terminal users can install the same disk image with Homebrew. See [Install with 
 Each release lists the SHA-256 of its disk image. The disk image is built with `./packaging/make-dmg.sh` from the tagged commit. In Terminal, in the folder you downloaded to:
 
 ```bash
-shasum -a 256 Chief-Status-1.4.0.dmg
+shasum -a 256 Chief-Status-1.5.0.dmg
 ```
 
-For v1.4.0 it must print:
-
-```
-a3990defd9da19b9542ae465e01e0ebbe0b43f2cbe66aa6bb8f8ebb13e2fad6b  Chief-Status-1.4.0.dmg
-```
-
-If it prints anything else, delete the file and download it again from the [release page](https://github.com/pohstep/chief-status/releases/tag/v1.4.0).
+v1.5.0 is not on the release page yet. When the disk image is attached, the release lists its SHA-256, and the command above must print that same value. The Homebrew cask in this repo says `REPLACE_WITH_SHA256` in that spot until then. If a download's checksum does not match the release page, delete the file and download it again.
 
 ### Why does macOS warn me?
 
@@ -114,11 +110,11 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 
 | Do this | To get this |
 | --- | --- |
-| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. **?** on the cube: a bot needs you. **404** on the cube: the working bots have all gone quiet. A small black dot on the working cube: one of them has |
+| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. Shaking through colours, with **?** or **!** and a number: a bot needs you (**?** is a question, **!** is an approval, the number is how many). **404** on the cube: the working bots have all gone quiet. A small black dot on the working cube: one of them has gone quiet |
 | Click the cube | Open or close the panel |
 | Click a bot's row | Open that bot's chat, if it sent a link |
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
-| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set a **Read token**, set **Icon colour**, or set **Appearance** to System, Light or Dark |
+| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set **Shake**, **Banner**, **Voice** and the reminder for a bot that needs you, set a **Read token**, set **Icon colour**, or set **Appearance** to System, Light or Dark |
 | Click **No feed yet? Set one up** | Open these setup steps |
 | Click **Send a test post** | Post one working line for a bot named Test, so you can see the panel light up |
 | Click **Deploy to Cloudflare** | Open the one-click deploy page for the feed |
@@ -127,7 +123,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | **last update 36m ago** on an orange card | You cleared its warning. It is still working, as far as the feed knows |
 | Click **Quit**, or press `⌘Q` | Close the app |
 
-**Icon colour** (Settings) sets the colour of the working cube, the **404** cube and the **?** cube. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404** and **?** marks, and the eyes, are drawn dark or white, whichever reads better on your colour. There is no outline.
+**Icon colour** (Settings) sets the colour of the working cube, the **404** cube, and the needs-you cube when that cube is sitting still. While a bot is waiting and Shake is on, the needs-you cube cycles through the preset colours instead. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404**, the **?** and the **!**, and the eyes, are drawn dark or white, whichever reads better on the fill. There is no outline.
 
 <p align="center">
   <img src="docs/panel.png" width="328" alt="The panel up close: a needs-you card at the top, a fresh working card, two black maybe-stale cards whose faces keep the bot's colour with 404 on them, and each row showing when that bot last posted">
@@ -137,7 +133,7 @@ How to read the panel:
 
 | You see | It means |
 | --- | --- |
-| An indigo card, **?** face and **needs you · 5m ago** | The bot is waiting on you, and has been for that long. It sits at the very top and never turns stale |
+| An indigo card, **?** face and **needs you · 5m ago** (or **approve**) | The bot is waiting on you, and has been for that long. **approve** means the post set `approval`. It sits at the very top and never turns stale |
 | An orange card with a timer | The bot is working, and has been for that long |
 | A black card, **404** face and **maybe stale · 34m** | The bot said "working" but hasn't posted for 30 minutes or more. The task may be old. See [A bot shows maybe stale](#a-bot-shows-maybe-stale-or-an-old-task) |
 | **stale?** on a card | It has said "working" for over an hour. It probably forgot to say "done" |
@@ -147,7 +143,24 @@ How to read the panel:
 | A plain row | The bot is idle |
 | The face colour | Just which bot it is. The colour never means status |
 
-While a bot is working, the cube bobs, and every few seconds does a little move: a twirl, a hop, a wiggle, a look around, or a blink. When everything is idle it only blinks now and then. When a bot fails it shakes once, then stays red.
+While a bot is working, the cube bobs, and every few seconds does a little move: a twirl, a hop, a wiggle, a look around, or a blink. When everything is idle it only blinks now and then. When a bot fails it shakes once, then stays red. While a bot needs you, and nothing has failed, the cube shakes in short bursts and cycles colour until that wait ends. See [When a bot needs you](#when-a-bot-needs-you).
+
+## When a bot needs you
+
+A bot that posts `needs_input` already gets the indigo card at the top of the panel. From this version the menu bar calls you over as well, and keeps calling until that bot posts a different state.
+
+- **A banner and a spoken line** the moment the wait starts. The title is "<Bot> needs your approval" when the post includes `"approval": true`, and "<Bot> needs you" otherwise. The banner's body is the task line, so that line has to say exactly what is needed: the question, or the thing to approve.
+- **A reminder** on a timer. The default is every 5 minutes. Settings can set 2, 10 or 15 minutes, or Off. Several bots waiting at once share one banner and one spoken line.
+- **The cube shakes** and its fill moves smoothly through orange, red, pink, purple, blue, teal and green. It carries a big **?** (a question) or **!** (an approval) and a count of how many bots are waiting. An approval shakes a little harder, and its count badge is red with a white number. A question's badge is solid dark or solid white, whichever reads on the menu bar. There is no outline. A waiting bot takes the cube even if another bot has failed. The failure still shows in the panel, and the failure alert still speaks if you turned that on. When nobody is waiting, a failure turns the cube red as before.
+- **A still cube** when Shake is off, or when macOS Reduce Motion is on. Same mark, same count, in your icon colour.
+- **Click the banner** and that bot's chat opens, the same way clicking its row does. The link is the one the bot sent, or the one in `links.json` on this Mac. A reminder that groups several bots opens the panel.
+- **Settings → When a bot needs you.** Shake, Banner and Voice are on, and the reminder is 5 minutes, until you change them. If macOS has refused banners, Settings says so. Voice still speaks when Voice is on. The app asks for notification permission the first time it runs.
+
+<p align="center">
+  <img src="docs/needs-you-frames-light.png" width="520" alt="Needs-you menu bar frames on a light bar: question-mark cubes with a count, exclamation-mark cubes with a red count, and the still fallback in the icon colour">
+</p>
+
+That picture is what `ChiefStatus --render-preview docs` writes as `needs-you-frames-light.png`. The same command also writes the dark menu bar (`needs-you-frames-dark.png`) and the new Settings section (`needs-you-settings-light.png` and `needs-you-settings-dark.png`). The file in this repo is a stand-in of those frames until the preview is rendered on a Mac.
 
 ## Set up the feed
 
@@ -268,8 +281,11 @@ curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "
 Job failed:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"failed","task":"what broke"}'
 
-Waiting on me:
+Waiting on me. The task line must say exactly what you need:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"needs_input","task":"the question you need answered"}'
+
+Waiting on my approval. The task line must say exactly what to approve:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"needs_input","task":"exactly what to approve","approval":true}'
 
 Then always:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"idle","task":""}'
@@ -323,7 +339,11 @@ export CHIEF_STATUS_TOKEN="the password from the deploy step"
 ./scripts/post-status.sh Agent1 working "drafting the homepage"
 ```
 
-The status can be `working`, `done`, `failed`, `idle` or `needs_input`. `needs_input` means the bot is waiting on you; the script sends `started_at` with it, so the card counts from that post, and it does not add a job to **Finished today**. Each bot has one current line, and a new post replaces it. A `done` or `failed` post is also added to today's **Finished today** list, with how long the job took since its `working` post.
+The status can be `working`, `done`, `failed`, `idle` or `needs_input`. `needs_input` means the bot is waiting on you; the script sends `started_at` with it, so the card counts from that post, and it does not add a job to **Finished today**. Add `--approval`, or set `CHIEF_STATUS_APPROVAL=1`, when it is an approval rather than a question. The task text must say exactly what is needed. Each bot has one current line, and a new post replaces it. A `done` or `failed` post is also added to today's **Finished today** list, with how long the job took since its `working` post.
+
+```bash
+./scripts/post-status.sh Agent1 needs_input "approve the homepage copy" --approval
+```
 
 ### Remove a bot
 
@@ -418,16 +438,16 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 
 | File | What's in it |
 | --- | --- |
-| `config.plist` | Your feed address (`feedURL`), whether alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file |
+| `config.plist` | Your feed address (`feedURL`), whether failure alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file. Needs-you alerts are not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice, the **Icon colour**, and the optional **Read token** are kept in the app's private preferences (`com.chiefstatus.menubar`, keys `appearance`, `iconColor` and `readToken`). `iconColor` is `default` or a `#RRGGBB` colour. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
+The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouShake`, `needsYouBanner`, `needsYouVoice` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The four needs-you keys are the only new values stored on this Mac: shake, banner and voice default to on, and the reminder defaults to 5 minutes. Nothing else new is saved. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
 
 What is stored in your feed, on your own Cloudflare account:
 
 | What | What's in it |
 | --- | --- |
-| The `bots` list | Each bot's name, current status, one-line task, start time, colour and optional chat link |
+| The `bots` list | Each bot's name, current status, one-line task, start time, colour, optional chat link, and `approval` (true only while that bot's current line is `needs_input` and it asked for an approval). Older apps ignore `approval` |
 | Today's finished jobs | Bot name, task line, start and end time, how long it took, and done or failed. Cleared every day at midnight in your `TZ`, and capped at 200 a day |
 | The `STATUS_TOKEN` password | Kept as a Cloudflare secret. It is not in any file in this repository |
 | The `READ_TOKEN`, if you set one | Kept as a Cloudflare secret, only if you [lock the feed](#keep-your-feed-private). When it is set, reading the feed needs it. When it is not set, reading stays open |
@@ -460,7 +480,7 @@ brew tap pohstep/tap
 brew install --cask chief-status
 ```
 
-The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.4.0.dmg` and checks the same SHA-256 listed above. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`.
+The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.5.0.dmg`. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`. v1.5.0 is not released yet, so that recipe's `sha256` is `REPLACE_WITH_SHA256` until the disk image exists.
 
 The cask installs **Chief Status** into `/Applications`. The app is unsigned. The first time macOS blocks it, use **Open Anyway** in **System Settings → Privacy & Security**, or:
 
@@ -518,13 +538,14 @@ What the reporting script reads on each bot's computer:
 | `CHIEF_STATUS_TOKEN` | The feed password. Required |
 | `CHIEF_STATUS_BOT_COLOR` | The bot's colour, like `#3B82F6`. Optional. Left out or empty, the saved colour stays (to clear it, post `"color":""` with `curl`) |
 | `CHIEF_STATUS_BOT_URL` | A link to the bot's chat. Optional. Same rules as the colour (`"url":""` clears it) |
+| `CHIEF_STATUS_APPROVAL` | Set to `1` on a `needs_input` post when the bot needs an approval. The task must say exactly what to approve. Ignored for every other status. `--approval` does the same thing |
 
 The feed's web addresses:
 
 | Address | What it does |
 | --- | --- |
 | `GET /status` | Everyone's current line, today's finished jobs, and the settings above. Open, unless `READ_TOKEN` is set, in which case it needs `Authorization: Bearer <READ_TOKEN>` and answers `401` with an empty body without it |
-| `POST /status` | Update one bot. Needs `Authorization: Bearer <STATUS_TOKEN>`. JSON body: `bot`, `status`, `task`, and optionally `started_at`, `color`, `url` |
+| `POST /status` | Update one bot. Needs `Authorization: Bearer <STATUS_TOKEN>`. JSON body: `bot`, `status`, `task`, and optionally `started_at`, `color`, `url`, `approval` |
 | `DELETE /status/<bot>` | Remove one bot and its jobs for today. Same password as `POST`. Answers `404` if there is no such bot. `scripts/delete-bot.sh` wraps it |
 | `GET /status/live` | The live WebSocket the app listens on. Same Bearer rule as `GET /status`, and it also accepts `?token=<read token>`. If it drops, the app checks the feed every ~15 seconds instead |
 

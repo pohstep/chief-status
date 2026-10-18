@@ -240,6 +240,7 @@ enum SetupShare {
         let done = curl(address, secret, "done", "what finished", "")
         let failed = curl(address, secret, "failed", "what broke", "")
         let needs = curl(address, secret, "needs_input", "the question you need answered", "")
+        let approval = curl(address, secret, "needs_input", "exactly what to approve", ",\"approval\":true")
         let idle = curl(address, secret, "idle", "", "")
         return """
 Your name is Agent1.
@@ -258,8 +259,11 @@ Job finished:
 Job failed:
 \(failed)
 
-Waiting on me:
+Waiting on me. The task line must say exactly what you need:
 \(needs)
+
+Waiting on my approval. The task line must say exactly what to approve:
+\(approval)
 
 Then always:
 \(idle)
@@ -452,6 +456,39 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
     /// The popover and its frosted materials follow the app's appearance.
     func apply() {
         NSApp.appearance = nsAppearance
+    }
+}
+
+/// Needs-you alerts. UserDefaults domain com.chiefstatus.menubar.
+/// Missing keys mean on, and a 5 minute reminder, so an existing install picks the feature up.
+enum NeedsYouSettings {
+    static let shakeKey = "needsYouShake"
+    static let bannerKey = "needsYouBanner"
+    static let voiceKey = "needsYouVoice"
+    static let reminderKey = "needsYouReminderMinutes"
+    static let reminderChoices = [0, 2, 5, 10, 15]
+
+    static func storedBool(_ key: String, fallback: Bool) -> Bool {
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return fallback
+        }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    static func storedReminder() -> Int {
+        if UserDefaults.standard.object(forKey: reminderKey) == nil {
+            return 5
+        }
+        let value = UserDefaults.standard.integer(forKey: reminderKey)
+        if reminderChoices.contains(value) {
+            return value
+        }
+        return 5
+    }
+
+    static func title(for minutes: Int) -> String {
+        if minutes <= 0 { return "Off" }
+        return "\(minutes) min"
     }
 }
 

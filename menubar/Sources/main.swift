@@ -2,6 +2,7 @@ import AppKit
 import CoreServices
 import Darwin
 import SwiftUI
+import UserNotifications
 
 private let appDelegate = AppDelegate()
 
@@ -19,7 +20,7 @@ application.delegate = appDelegate
 application.setActivationPolicy(.accessory)
 application.run()
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private let model = StatusModel()
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
 
+        UNUserNotificationCenter.current().delegate = self
         AppearanceChoice.stored().apply()
 
         let controller = PopoverController(model: model)
@@ -54,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.setAccessibilityLabel("Chief Status")
         }
 
+        animator.menuBarIsDark = { [weak self] in
+            guard let button = self?.statusItem.button else { return false }
+            let match = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+            return match == .darkAqua
+        }
         animator.onImage = { [weak self] image in
             guard let button = self?.statusItem.button else { return }
             image.isTemplate = false
@@ -71,6 +78,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Lets a script open or close the panel for screenshots and tests, without UI scripting:
         // a distributed notification named com.chiefstatus.togglePanel.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(accessibilityOptionsChanged(_:)),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: NSWorkspace.shared
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(menuBarThemeChanged(_:)),
+            name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(togglePanelFromNotification(_:)),
@@ -118,6 +137,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         togglePopover(nil)
     }
 
+    /// Reduce Motion switches the needs-you cube between the shake and the still icon.
+    @objc private func accessibilityOptionsChanged(_ notification: Notification) {
+        updateChrome()
+    }
+
+    /// The count badge swaps dark and white with the menu bar, including while the cube is still.
+    @objc private func menuBarThemeChanged(_ notification: Notification) {
+        updateChrome()
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let info = response.notification.request.content.userInfo
+        if let name = info["bot"] as? String {
+            if !model.openChat(named: name) {
+                revealPanel()
+            }
+        } else if let packed = info["bots"] as? String {
+            let names = packed.split(separator: "\n").map { String($0) }
+            if names.count == 1 {
+                if !model.openChat(named: names[0]) {
+                    revealPanel()
+                }
+            } else {
+                revealPanel()
+            }
+        }
+        completionHandler()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if lockFD >= 0 {
             Darwin.close(lockFD)
@@ -156,7 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func applyBar(_ state: BarState) {
         barState = state
-        animator.setState(state)
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        animator.setState(state, animateNeedsYou: model.needsYouShake && !reduceMotion)
         statusItem.button?.toolTip = state.toolTip
         statusItem.button?.setAccessibilityLabel(state.toolTip)
     }

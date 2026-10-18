@@ -23,22 +23,28 @@ enum BarTone: Equatable {
 }
 
 /// What the menu bar cube shows, in priority order:
-/// any failed → red. Else any bot needs input → "?" cube. Else any working bot that posted in the last 30 min → working cube,
-/// plus a small black dot if another working bot is stale. Else any stale working bot → "404" cube.
-/// The working, "?" and "404" cubes all use the icon colour from Settings (Default is today's orange).
+/// any bot waiting → the needs-you cube (a question or an approval). Else any failed → red.
+/// Else any working bot that posted in the last 30 min → working cube, plus a small black dot if another
+/// working bot is stale. Else any stale working bot → "404" cube.
+/// The working cube, the still needs-you cube and the "404" cube use the icon colour from Settings.
 /// Else grey (idle or finished).
 struct BarState: Equatable {
     var tone: BarTone
     var staleDot: Bool = false
     var staleCount: Int = 0
     var needsCount: Int = 0
+    /// True when any waiting bot asked for an approval. The cube then shows ! and shakes a little harder.
+    var needsApproval: Bool = false
 
     var toolTip: String {
         switch tone {
         case .red:
             return "Chief Status — an agent failed"
         case .indigo:
-            return needsCount == 1 ? "Chief Status — a bot needs you" : "Chief Status — \(needsCount) bots need you"
+            if needsCount == 1 {
+                return needsApproval ? "Chief Status — a bot needs your approval" : "Chief Status — a bot needs you"
+            }
+            return "Chief Status — \(needsCount) bots need you"
         case .orange:
             if staleDot {
                 return "Chief Status — working · \(staleCount) maybe stale (no update for 30+ min)"
@@ -54,12 +60,13 @@ struct BarState: Equatable {
     }
 
     static func from(bots: [Bot], now: Date, staleAfterMinutes: Int) -> BarState {
+        let waiting = bots.filter { $0.status == "needs_input" }
+        if !waiting.isEmpty {
+            let approval = waiting.contains { $0.approval }
+            return BarState(tone: .indigo, needsCount: waiting.count, needsApproval: approval)
+        }
         if bots.contains(where: { $0.status == "failed" }) {
             return BarState(tone: .red)
-        }
-        let needs = bots.filter { $0.status == "needs_input" }.count
-        if needs > 0 {
-            return BarState(tone: .indigo, needsCount: needs)
         }
         let working = bots.filter { $0.status == "working" }
         let stale = working.filter { $0.isFaded(now: now, staleAfterMinutes: staleAfterMinutes) }.count
@@ -94,11 +101,18 @@ enum SpecialMove: CaseIterable, Equatable {
 /// Draws the menu-bar face and plays its motion.
 /// Orange: a gentle bob with a little squash, plus a short move every few seconds.
 /// Grey: a slow blink now and then. Red: one small shake, then still.
+/// Needs-you: about 30 frames a second, and only while that cube is on screen.
+/// Idle tones do not run that timer.
 final class FaceAnimator {
     var onImage: ((NSImage) -> Void)?
+    /// Read on each needs-you frame so the count badge stays readable if the menu bar theme changes.
+    var menuBarIsDark: () -> Bool = { false }
 
     private var tone: BarTone = .grey
     private var staleDot = false
+    private var needsCount = 0
+    private var needsApproval = false
+    private var animateNeedsYou = true
     private var hasTone = false
     private var timer: Timer?
     private var clock: Clock = .stopped
@@ -123,16 +137,17 @@ final class FaceAnimator {
         case waiting
     }
 
-    func setState(_ state: BarState) {
-        staleDot = state.staleDot
-        setTone(state.tone)
-    }
-
-    func setTone(_ tone: BarTone) {
+    /// `animateNeedsYou` is false when the shake toggle is off or Reduce Motion is on.
+    /// The cube then stays on one frame: the mark and the badge, in the icon colour.
+    func setState(_ state: BarState, animateNeedsYou: Bool) {
         let now = ProcessInfo.processInfo.systemUptime
-        if !hasTone || tone != self.tone {
-            begin(tone, now: now)
-            self.tone = tone
+        staleDot = state.staleDot
+        needsCount = state.needsCount
+        needsApproval = state.needsApproval
+        self.animateNeedsYou = animateNeedsYou
+        if !hasTone || state.tone != tone {
+            begin(state.tone, now: now)
+            tone = state.tone
             hasTone = true
         }
         advance(now: now)
@@ -211,6 +226,20 @@ final class FaceAnimator {
     }
 
     private func render(now: TimeInterval) {
+        if tone == .indigo {
+            let pose = animateNeedsYou ? NeedsYouMotion.pose(time: now, approval: needsApproval) : IconPose()
+            let fill: NSColor? = animateNeedsYou ? NeedsYouMotion.fill(at: now) : nil
+            onImage?(StatusIcon.image(
+                tone: .indigo,
+                pose: pose,
+                working: .stored,
+                needsCount: needsCount,
+                needsApproval: needsApproval,
+                needsFill: fill,
+                badgeOnDark: menuBarIsDark()
+            ))
+            return
+        }
         let pose = FaceMotion.pose(
             tone: tone,
             time: now,
@@ -234,7 +263,12 @@ final class FaceAnimator {
             return blinkOn ? .frames(1.0 / 20.0) : .waiting
         case .red:
             return shakeOn ? .frames(1.0 / 20.0) : .stopped
-        case .black, .indigo:
+        case .indigo:
+            if animateNeedsYou {
+                return .frames(1.0 / 30.0)
+            }
+            return .stopped
+        case .black:
             return .stopped
         }
     }
@@ -365,7 +399,81 @@ enum FaceMotion {
     }
 }
 
-/// Fill for the working, stale "404" and needs-you "?" cubes. Idle grey and failed red ignore this.
+/// The needs-you cube. Colour cycles through the preset list. Shake is a short burst, then a rest.
+/// Approval uses the same burst length and a slightly faster, wider wiggle.
+enum NeedsYouMotion {
+    static let burst: TimeInterval = 0.6
+    static let colourLoop: TimeInterval = 8
+
+    static let palette: [NSColor] = [
+        rgb(243, 156, 40),
+        rgb(233, 67, 71),
+        rgb(232, 95, 168),
+        rgb(135, 98, 243),
+        rgb(58, 134, 244),
+        rgb(59, 181, 176),
+        rgb(90, 191, 120),
+    ]
+
+    static func fill(at time: TimeInterval) -> NSColor {
+        let count = palette.count
+        if count == 0 { return ChiefPalette.orange }
+        var t = time.truncatingRemainder(dividingBy: colourLoop)
+        if t < 0 { t += colourLoop }
+        let scaled = t / colourLoop * Double(count)
+        let index = Int(scaled) % count
+        let next = (index + 1) % count
+        let raw = CGFloat(scaled - Double(Int(scaled)))
+        let eased = raw * raw * (3 - 2 * raw)
+        return mix(palette[index], palette[next], eased)
+    }
+
+    static func pose(time: TimeInterval, approval: Bool) -> IconPose {
+        let rest: TimeInterval = approval ? 0.28 : 0.45
+        let cycle = burst + rest
+        var phase = time.truncatingRemainder(dividingBy: cycle)
+        if phase < 0 { phase += cycle }
+        var pose = IconPose()
+        if phase >= burst { return pose }
+        let progress = CGFloat(phase / burst)
+        let envelope = sin(.pi * progress)
+        let wiggles: CGFloat = approval ? 7 : 5
+        let wave = sin(progress * wiggles * 2 * .pi)
+        let degrees: CGFloat = approval ? 18 : 14
+        pose.rotation = wave * envelope * (degrees * .pi / 180)
+        let slide: CGFloat = approval ? 2.1 : 1.6
+        pose.shake = wave * envelope * slide
+        return pose
+    }
+
+    private static func rgb(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> NSColor {
+        return NSColor(srgbRed: red / 255, green: green / 255, blue: blue / 255, alpha: 1)
+    }
+
+    private static func mix(_ left: NSColor, _ right: NSColor, _ amount: CGFloat) -> NSColor {
+        let from = left.usingColorSpace(.sRGB) ?? left
+        let to = right.usingColorSpace(.sRGB) ?? right
+        var r1: CGFloat = 0
+        var g1: CGFloat = 0
+        var b1: CGFloat = 0
+        var a1: CGFloat = 0
+        var r2: CGFloat = 0
+        var g2: CGFloat = 0
+        var b2: CGFloat = 0
+        var a2: CGFloat = 0
+        from.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        to.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        let t = min(1, max(0, amount))
+        return NSColor(
+            srgbRed: r1 + (r2 - r1) * t,
+            green: g1 + (g2 - g1) * t,
+            blue: b1 + (b2 - b1) * t,
+            alpha: 1
+        )
+    }
+}
+
+/// Fill for the working, stale "404" and needs-you cubes. Idle grey and failed red ignore this.
 enum WorkingFill {
     /// Today's orange.
     case palette
@@ -382,7 +490,11 @@ enum StatusIcon {
         tone: BarTone,
         pose: IconPose,
         staleDot: Bool = false,
-        working: WorkingFill = .stored
+        working: WorkingFill = .stored,
+        needsCount: Int = 0,
+        needsApproval: Bool = false,
+        needsFill: NSColor? = nil,
+        badgeOnDark: Bool = false
     ) -> NSImage {
         switch tone {
         case .black:
@@ -395,10 +507,18 @@ enum StatusIcon {
             image.isTemplate = false
             return image
         case .indigo:
-            let fill = IconInk.fill(working)
+            let fill = needsFill ?? IconInk.fill(working)
             let ink = IconInk.ink(on: fill)
+            let mark = needsApproval ? "!" : "?"
+            let count = needsCount
+            let approval = needsApproval
+            let onDark = badgeOnDark
+            let drawn = pose
             let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-                paintMark("?", fill: fill, ink: ink, size: 12)
+                paintAlert(mark, fill: fill, ink: ink, pose: drawn)
+                if count > 0 {
+                    paintCountBadge(count: count, approval: approval, onDark: onDark)
+                }
                 return true
             }
             image.isTemplate = false
@@ -494,6 +614,73 @@ enum StatusIcon {
         ])
         let size = text.size()
         text.draw(at: NSPoint(x: 9 - size.width / 2, y: 9 - size.height / 2 + 0.2))
+    }
+
+    /// Needs-you face. A big ? or ! on the icon colour (or the cycling colour), with no outline.
+    /// The shake lives in `pose`. The count badge is drawn later, so it stays put.
+    private static func paintAlert(_ mark: String, fill: NSColor, ink: NSColor, pose: IconPose) {
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        if let graphics = NSGraphicsContext.current {
+            graphics.shouldAntialias = true
+            graphics.imageInterpolation = .high
+        }
+
+        let centre = NSPoint(x: 9, y: 9)
+        let fit = fitScale(pose: pose, centre: centre)
+        let transform = NSAffineTransform()
+        transform.translateX(by: centre.x + pose.shake, yBy: centre.y)
+        transform.rotate(byRadians: pose.rotation)
+        transform.scaleX(by: fit, yBy: fit)
+        transform.translateX(by: -centre.x, yBy: -centre.y)
+        transform.concat()
+
+        let face = NSRect(x: 1, y: 1, width: 16, height: 16)
+        fill.setFill()
+        NSBezierPath(roundedRect: face, xRadius: 5, yRadius: 5).fill()
+
+        let font = NSFont.systemFont(ofSize: 13, weight: .heavy)
+        let text = NSAttributedString(string: mark, attributes: [
+            .font: font,
+            .foregroundColor: ink,
+        ])
+        let size = text.size()
+        text.draw(at: NSPoint(x: 9 - size.width / 2, y: 9 - size.height / 2 - 0.4))
+    }
+
+    /// Solid count at the top-right. Approval is red with a white digit.
+    /// A question uses dark-on-light or white-on-dark so it reads on either menu bar. No outline.
+    private static func paintCountBadge(count: Int, approval: Bool, onDark: Bool) {
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        if let graphics = NSGraphicsContext.current {
+            graphics.shouldAntialias = true
+        }
+        let shown = count > 9 ? "9+" : "\(count)"
+        let fontSize: CGFloat = shown.count > 1 ? 6 : 7
+        let badgeColor: NSColor
+        let numberColor: NSColor
+        if approval {
+            badgeColor = ChiefPalette.red
+            numberColor = NSColor.white
+        } else if onDark {
+            badgeColor = NSColor.white
+            numberColor = ChiefPalette.eye
+        } else {
+            badgeColor = ChiefPalette.eye
+            numberColor = NSColor.white
+        }
+        let text = NSAttributedString(string: shown, attributes: [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: numberColor,
+        ])
+        let textSize = text.size()
+        let height: CGFloat = 9
+        let width = max(height, textSize.width + 4)
+        let rect = NSRect(x: pointSize - width - 0.2, y: pointSize - height - 0.2, width: width, height: height)
+        badgeColor.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: height / 2, yRadius: height / 2).fill()
+        text.draw(at: NSPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2))
     }
 
     /// Small black dot with a light rim, bottom right: working, but another working bot is stale.

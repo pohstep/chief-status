@@ -21,8 +21,11 @@ curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "
 Job failed:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"failed","task":"what broke"}'
 
-Waiting on me:
+Waiting on me. The task line must say exactly what you need:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"needs_input","task":"the question you need answered"}'
+
+Waiting on my approval. The task line must say exactly what to approve:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"needs_input","task":"exactly what to approve","approval":true}'
 
 Then always:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"idle","task":""}'
@@ -30,7 +33,7 @@ curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "
 Never put passwords or secrets in the task line.
 ```
 
-`started_at` is optional. On `working` and `needs_input`, leave it out and the feed uses the current time. On `done` or `failed`, leave it out. If that bot was working, the feed keeps the working start for the row and for today's log. Add `"url":"https://example.com/agent1"` when the row should open a chat. Leave `url` out and the previous link stays. Send `"url":""` to clear it. `"color"` works the same way.
+`started_at` is optional. On `working` and `needs_input`, leave it out and the feed uses the current time. On `done` or `failed`, leave it out. If that bot was working, the feed keeps the working start for the row and for today's log. Add `"url":"https://example.com/agent1"` when the row should open a chat. Leave `url` out and the previous link stays. Send `"url":""` to clear it. `"color"` works the same way. Add `"approval": true` only with `needs_input`, when you need an approval rather than an answer. Leave it out, or send `false`, and the menu bar treats it as a question. The task line must say exactly what is needed.
 
 ## If the bot has this repo
 
@@ -66,13 +69,18 @@ Or, if it failed:
   ./worker/scripts/post-status.sh Agent1 failed "what broke"
   ./worker/scripts/post-status.sh Agent1 idle ""
 
+When you are waiting on your person, post needs_input. The task must say exactly what you need. Add --approval when it is an approval:
+
+  ./worker/scripts/post-status.sh Agent1 needs_input "which logo?"
+  ./worker/scripts/post-status.sh Agent1 needs_input "approve the homepage copy" --approval
+
 If you hand work to a background helper or a cloud coding agent, post working for yourself while it runs, and done when it comes back.
 
-Use working, done, failed, or idle. The task is one line. Do not put secrets in it.
+Use working, done, failed, idle, or needs_input. The task is one line. Do not put secrets in it.
 Do not send a start time on done, failed, or idle. The feed keeps the time from the working post, and that is the duration in the panel.
 ```
 
-The script is `worker/scripts/post-status.sh`. It is plain `sh` plus `curl`, so it runs on a Mac or Linux. It sends `started_at` only for `working` and `needs_input`. Post `needs_input` when you are waiting on your person (a question or an approval), and `working` again once they answer. It sends `CHIEF_STATUS_BOT_COLOR` and `CHIEF_STATUS_BOT_URL` when those are set.
+The script is `worker/scripts/post-status.sh`. It is plain `sh` plus `curl`, so it runs on a Mac or Linux. It sends `started_at` only for `working` and `needs_input`. Post `needs_input` when you are waiting on your person, and `working` again once they answer. `--approval`, or `CHIEF_STATUS_APPROVAL=1`, marks that wait as an approval. The task text must say exactly what is needed. It sends `CHIEF_STATUS_BOT_COLOR` and `CHIEF_STATUS_BOT_URL` when those are set.
 
 To take a bot off the feed (a test bot, or one you retired), run `worker/scripts/delete-bot.sh BOT` with the same `CHIEF_STATUS_URL` and `CHIEF_STATUS_TOKEN`. It calls `DELETE /status/<bot>` and removes that bot and its jobs for today.
 

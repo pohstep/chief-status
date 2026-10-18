@@ -20,6 +20,11 @@ export type IncomingPost = {
 	url: string | null;
 	/** null means "leave the stored colour alone". */
 	color: string | null;
+	/**
+	 * True only when this post is needs_input and the bot is waiting on an approval.
+	 * Any other status stores false. Omitted means false.
+	 */
+	approval: boolean;
 };
 
 export function isStatus(value: string): value is Status {
@@ -121,9 +126,21 @@ export function parsePost(
 		}
 	}
 
+	// approval is only meaningful with needs_input. Other statuses store false.
+	// Omit it, or send null, and it is false. A non-boolean is rejected.
+	let approval = false;
+	if ("approval" in body && body.approval !== null && body.approval !== undefined) {
+		if (typeof body.approval !== "boolean") {
+			return { ok: false, error: "approval must be true or false" };
+		}
+		if (body.status === "needs_input") {
+			approval = body.approval;
+		}
+	}
+
 	return {
 		ok: true,
-		post: { bot, status: body.status, task, started_at: started, url, color },
+		post: { bot, status: body.status, task, started_at: started, url, color, approval },
 	};
 }
 
