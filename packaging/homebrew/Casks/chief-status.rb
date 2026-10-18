@@ -1,9 +1,8 @@
 cask "chief-status" do
   version "1.4.0"
 
-  # Placeholders until the v1.4.0 GitHub release exists.
-  # Replace sha256 with the output of: shasum -a 256 Chief-Status-1.4.0.dmg
-  sha256 "REPLACE_WITH_SHA256"
+  # SHA-256 of Chief-Status-1.4.0.dmg as attached to the v1.4.0 GitHub release.
+  sha256 "a3990defd9da19b9542ae465e01e0ebbe0b43f2cbe66aa6bb8f8ebb13e2fad6b"
   url "https://github.com/pohstep/chief-status/releases/download/v#{version}/Chief-Status-#{version}.dmg"
 
   name "Chief Status"
