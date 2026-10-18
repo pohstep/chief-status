@@ -29,6 +29,17 @@ async function request(url, options = {}) {
 	return { status: response.status, body, headers: response.headers };
 }
 
+function postStatus(body) {
+	return request(`http://127.0.0.1:${port}/status`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+}
+
 function startWorker() {
 	const persist = fs.mkdtempSync(path.join(os.tmpdir(), "chief-status-"));
 	const bin = path.join(workerDir, "node_modules", ".bin", "wrangler");
@@ -207,6 +218,10 @@ async function main() {
 		const agents = afterReplace.body.bots.filter((bot) => bot.bot === "Agent1");
 		assert(agents.length === 1, "upsert should keep one Agent1");
 		assert(agents[0].status === "done", "Agent1 should now be done");
+		assert(
+			agents[0].started_at === "2026-10-18T10:00:00.000Z",
+			`done should keep the working start, was ${agents[0].started_at}`,
+		);
 
 		const added = await request(`${base}/status`, {
 			method: "POST",
@@ -276,6 +291,261 @@ async function main() {
 		const scripted = afterScript.body.bots.find((bot) => bot.bot === "Agent2");
 		assert(scripted.status === "working", "script should mark Agent2 working");
 		assert(scripted.task === 'say "hi"', `script task was ${scripted.task}`);
+		assert(scripted.url === "", "script without a link should leave url empty");
+		assert(scripted.color === "", "script without a colour should leave color empty");
+
+		assert(afterScript.body.stale_after_minutes === 60, `stale ${afterScript.body.stale_after_minutes}`);
+		assert(afterScript.body.timezone === "UTC", `timezone ${afterScript.body.timezone}`);
+		assert(Array.isArray(afterScript.body.today), "today should be an array");
+		const finished = afterScript.body.today.map((job) => `${job.bot}:${job.result}`);
+		assert(finished.includes("Agent1:done"), `today missing Agent1 done: ${finished.join(",")}`);
+		assert(finished.includes("Sprocket:failed"), `today missing Sprocket failed: ${finished.join(",")}`);
+		assert(
+			!afterScript.body.today.some((job) => job.bot === "Agent2"),
+			"a working post should not land in today's log",
+		);
+		for (const job of afterScript.body.today) {
+			assert(typeof job.task === "string", "job task");
+			assert(typeof job.started_at === "string" && job.started_at.length > 0, "job start");
+			assert(typeof job.ended_at === "string" && job.ended_at.length > 0, "job end");
+			assert(typeof job.duration_ms === "number" && job.duration_ms >= 0, "job duration");
+		}
+
+		const agent1Job = afterScript.body.today.find((job) => job.bot === "Agent1" && job.result === "done");
+		assert(agent1Job, "Agent1 should have a finished job");
+		assert(
+			agent1Job.started_at === "2026-10-18T10:00:00.000Z",
+			`job start was ${agent1Job.started_at}`,
+		);
+		assert(agent1Job.duration_ms > 60_000, `job duration was ${agent1Job.duration_ms}, expected the working clock`);
+
+		const beforeDedupe = afterScript.body.today.length;
+		const duplicate = await postStatus({
+			bot: "Agent1",
+			status: "done",
+			task: "homepage is up",
+		});
+		assert(duplicate.status === 200, `dedupe post ${duplicate.status}`);
+		assert(
+			duplicate.body.bot.started_at === "2026-10-18T10:00:00.000Z",
+			"a repeated done without a clock should keep the stored start",
+		);
+		const afterDedupe = await request(`${base}/status`);
+		assert(
+			afterDedupe.body.today.length === beforeDedupe,
+			`same finish should not be logged twice (${beforeDedupe} -> ${afterDedupe.body.today.length})`,
+		);
+
+		const linked = await postStatus({
+			bot: "Agent1",
+			status: "idle",
+			task: "",
+			started_at: "2026-10-18T11:05:00Z",
+			url: "https://example.com/agent1",
+		});
+		assert(linked.status === 200, `url post ${linked.status} ${JSON.stringify(linked.body)}`);
+		assert(linked.body.bot.url === "https://example.com/agent1", "POST should echo the link");
+		const withLink = await request(`${base}/status`);
+		assert(
+			withLink.body.bots.find((bot) => bot.bot === "Agent1").url === "https://example.com/agent1",
+			"GET should return the link",
+		);
+
+		const kept = await postStatus({
+			bot: "Agent1",
+			status: "idle",
+			task: "still linked",
+			started_at: "2026-10-18T11:06:00Z",
+		});
+		assert(kept.status === 200, `omit url ${kept.status}`);
+		assert(kept.body.bot.url === "https://example.com/agent1", "omitting url should keep the stored link");
+
+		const cleared = await postStatus({
+			bot: "Agent1",
+			status: "idle",
+			task: "",
+			started_at: "2026-10-18T11:07:00Z",
+			url: "",
+		});
+		assert(cleared.status === 200, `clear url ${cleared.status}`);
+		assert(cleared.body.bot.url === "", "empty url should clear the link");
+
+		const badUrl = await postStatus({
+			bot: "Agent1",
+			status: "idle",
+			task: "",
+			started_at: "2026-10-18T11:08:00Z",
+			url: "javascript:alert(1)",
+		});
+		assert(badUrl.status === 400, `bad url ${badUrl.status}`);
+
+		const deep = await postStatus({
+			bot: "Agent2",
+			status: "working",
+			task: "still going",
+			started_at: "2026-10-18T10:00:00Z",
+			url: "cursor://chat/Agent2",
+		});
+		assert(deep.status === 200, `deep link ${deep.status} ${JSON.stringify(deep.body)}`);
+		assert(deep.body.bot.url === "cursor://chat/Agent2", "a deep link should be stored");
+
+		const postedByScriptWithUrl = await exec(script, ["Agent2", "WORKING", "linked job"], {
+			env: {
+				...process.env,
+				CHIEF_STATUS_URL: base,
+				CHIEF_STATUS_TOKEN: token,
+				CHIEF_STATUS_BOT_URL: "https://example.com/agent2",
+			},
+		});
+		assert(
+			postedByScriptWithUrl.stdout.includes('"ok":true'),
+			`script url output ${postedByScriptWithUrl.stdout}`,
+		);
+		const scriptedLink = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "Agent2");
+		assert(scriptedLink.url === "https://example.com/agent2", `script url was ${scriptedLink.url}`);
+
+		const registeredAt = Date.now();
+		const registered = await postStatus({
+			bot: "Widget",
+			status: "working",
+			task: "first job",
+			color: "#3B82F6",
+		});
+		assert(registered.status === 200, `register ${registered.status} ${JSON.stringify(registered.body)}`);
+		assert(registered.body.bot.color === "#3b82f6", `stored colour ${registered.body.bot.color}`);
+		const registeredStart = Date.parse(registered.body.bot.started_at);
+		assert(
+			Math.abs(registeredStart - registeredAt) < 15000,
+			`working without started_at should default to now, was ${registered.body.bot.started_at}`,
+		);
+		const names = (await request(`${base}/status`)).body.bots.map((bot) => bot.bot);
+		assert(names.includes("Widget"), `Widget should register itself, saw ${names.join(",")}`);
+		assert(names.indexOf("Agent1") < names.indexOf("Widget"), "pre-seeded bots stay ahead of a new one");
+
+		const keptColor = await postStatus({
+			bot: "Widget",
+			status: "working",
+			task: "still first job",
+		});
+		assert(keptColor.body.bot.color === "#3b82f6", "omitting color should keep the stored colour");
+
+		const finishedWidget = await postStatus({
+			bot: "Widget",
+			status: "done",
+			task: "first job",
+			started_at: new Date().toISOString(),
+		});
+		assert(finishedWidget.status === 200, `widget done ${finishedWidget.status}`);
+		assert(
+			finishedWidget.body.bot.started_at === registered.body.bot.started_at,
+			"done should ignore a fresh started_at when the bot was working",
+		);
+		const widgetJob = (await request(`${base}/status`)).body.today.find(
+			(job) => job.bot === "Widget" && job.task === "first job",
+		);
+		assert(widgetJob, "Widget should be in today's log");
+		assert(widgetJob.started_at === registered.body.bot.started_at, "the job uses the working start");
+		assert(widgetJob.duration_ms < 20000, `a just-finished job was ${widgetJob.duration_ms}ms`);
+
+		const clearedColor = await postStatus({
+			bot: "Widget",
+			status: "idle",
+			task: "",
+			color: "",
+		});
+		assert(clearedColor.status === 200, `clear color ${clearedColor.status}`);
+		assert(clearedColor.body.bot.color === "", "empty color should clear the stored colour");
+
+		const badColor = await postStatus({
+			bot: "Widget",
+			status: "idle",
+			task: "",
+			color: "blue",
+		});
+		assert(badColor.status === 400, `bad color ${badColor.status}`);
+
+		const postedByScriptWithColor = await exec(script, ["Widget", "IDLE", ""], {
+			env: {
+				...process.env,
+				CHIEF_STATUS_URL: base,
+				CHIEF_STATUS_TOKEN: token,
+				CHIEF_STATUS_BOT_COLOR: "#EC4899",
+			},
+		});
+		assert(
+			postedByScriptWithColor.stdout.includes('"ok":true'),
+			`script color output ${postedByScriptWithColor.stdout}`,
+		);
+		const colored = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "Widget");
+		assert(colored.color === "#ec4899", `script colour was ${colored.color}`);
+
+		const notLive = await request(`${base}/status/live`);
+		assert(notLive.status === 426, `live without upgrade ${notLive.status} ${JSON.stringify(notLive.body)}`);
+
+		const liveMessages = await new Promise((resolve, reject) => {
+			const ws = new WebSocket(`${base.replace("http", "ws")}/status/live`);
+			const messages = [];
+			const timer = setTimeout(() => {
+				ws.close();
+				reject(new Error(`websocket timed out after ${messages.length} message(s)`));
+			}, 8000);
+			ws.addEventListener("error", () => {
+				clearTimeout(timer);
+				reject(new Error("websocket error"));
+			});
+			ws.addEventListener("message", (event) => {
+				messages.push(JSON.parse(String(event.data)));
+				if (messages.length === 1) {
+					postStatus({
+						bot: "Agent2",
+						status: "idle",
+						task: "",
+						started_at: "2026-10-18T11:09:00Z",
+					}).then((res) => {
+						if (res.status !== 200) {
+							clearTimeout(timer);
+							ws.close();
+							reject(new Error(`post during live ${res.status} ${JSON.stringify(res.body)}`));
+						}
+					});
+				}
+				if (messages.length >= 2) {
+					clearTimeout(timer);
+					ws.close();
+					resolve(messages);
+				}
+			});
+		});
+		assert(liveMessages[0].type === "snapshot", "first live message should be a snapshot");
+		assert(Array.isArray(liveMessages[0].bots), "live snapshot should include bots");
+		assert(liveMessages[0].stale_after_minutes === 60, "live snapshot should include the stale window");
+		const liveAgent2 = liveMessages[1].bots.find((bot) => bot.bot === "Agent2");
+		assert(liveAgent2.status === "idle", `live update status ${liveAgent2 && liveAgent2.status}`);
+		assert(
+			liveAgent2.url === "https://example.com/agent2",
+			"live update should keep the link when url is omitted",
+		);
+
+		for (let i = 0; i < 201; i += 1) {
+			const stamp = new Date(Date.UTC(2026, 9, 18, 0, 0, i)).toISOString();
+			const cappedPost = await postStatus({
+				bot: "CapBot",
+				status: i % 2 === 0 ? "done" : "failed",
+				task: `job ${i}`,
+				started_at: stamp,
+			});
+			assert(cappedPost.status === 200, `cap post ${i} ${cappedPost.status}`);
+		}
+		const capped = await request(`${base}/status`);
+		assert(capped.body.today.length === 200, `today should cap at 200, was ${capped.body.today.length}`);
+		assert(
+			capped.body.today.some((job) => job.task === "job 200"),
+			"the newest finished job should stay",
+		);
+		assert(
+			!capped.body.today.some((job) => job.bot === "Agent1"),
+			"jobs older than the cap should be dropped",
+		);
 
 		console.log("feed tests passed");
 	} finally {

@@ -20,11 +20,27 @@ head_sampling_rate = 1
 [secrets]
 required = [ "STATUS_TOKEN" ]
 
-# Names created the first time the feed is read. Later posts can add more.
+# Optional pre-seed and order. A bot's first POST registers it even if it is not listed.
+# Leave this empty to start with no rows. Optional link: Agent1|https://example.com/agent1
+# or BOT_URLS below.
+# TZ is an IANA name used for the daily job log. STALE_MINUTES marks a long working row.
 [vars]
 BOTS = "Agent1,Agent2"
+BOT_URLS = ""
+TZ = "UTC"
+STALE_MINUTES = "60"
 
 [[kv_namespaces]]
 binding = "STATUS"
 # Replace this with the id printed by: npx wrangler kv namespace create STATUS
+# Kept so an existing v1.1 feed can be copied in on the first request.
 id = "00000000000000000000000000000001"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "StatusRoom"
+
+# SQLite-backed Durable Objects are the free-plan kind. This tag runs on deploy.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = [ "StatusRoom" ]

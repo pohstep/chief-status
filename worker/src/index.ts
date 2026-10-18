@@ -1,16 +1,7 @@
-const INDEX_KEY = "bots:index";
-const FALLBACK_BOTS = ["Agent1", "Agent2"];
-const STATUSES = ["idle", "working", "failed", "done"] as const;
-const BOT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._'’-]{0,39}$/u;
+import { parsePost } from "./parse";
+import { StatusRoom } from "./status-room";
 
-type Status = (typeof STATUSES)[number];
-
-type BotRecord = {
-	bot: string;
-	status: Status;
-	task: string;
-	started_at: string;
-};
+export { StatusRoom };
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
@@ -33,7 +24,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
 	if (request.method === "GET" && path === "/") {
 		return new Response(
-			"Chief Status is running.\nBots are listed at /status\n",
+			"Chief Status is running.\nBots are listed at /status\nLive updates are at /status/live\n",
 			{
 				headers: {
 					"Content-Type": "text/plain; charset=utf-8",
@@ -43,13 +34,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
 		);
 	}
 
+	if (path === "/status/live") {
+		return live(request, env);
+	}
+
 	if (path !== "/status") {
 		return json({ error: "not found" }, 404);
 	}
 
 	if (request.method === "GET") {
-		const bots = await listBots(env.STATUS, configuredBots(env));
-		return json({ bots });
+		const snapshot = await env.ROOM.getByName("feed").snapshot();
+		return json(snapshot);
 	}
 
 	if (request.method === "POST") {
@@ -57,6 +52,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
 	}
 
 	return json({ error: "method not allowed" }, 405, { Allow: "GET, POST" });
+}
+
+async function live(request: Request, env: Env): Promise<Response> {
+	if (request.method !== "GET") {
+		return json({ error: "method not allowed" }, 405, { Allow: "GET" });
+	}
+	const upgrade = request.headers.get("Upgrade");
+	if (!upgrade || upgrade.toLowerCase() !== "websocket") {
+		return json({ error: "expected a websocket upgrade" }, 426);
+	}
+	return env.ROOM.getByName("feed").fetch(request);
 }
 
 async function postStatus(request: Request, env: Env): Promise<Response> {
@@ -79,197 +85,17 @@ async function postStatus(request: Request, env: Env): Promise<Response> {
 		return json({ error: parsed.error }, 400);
 	}
 
-	const record = parsed.record;
-	const starters = configuredBots(env);
-	await ensureSeed(env.STATUS, starters);
-	await env.STATUS.put(botKey(record.bot), JSON.stringify(record));
-	await rememberBot(env.STATUS, record.bot, starters);
+	const saved = await env.ROOM.getByName("feed").upsert(parsed.post);
 
 	console.log(
 		JSON.stringify({
 			event: "status_upsert",
-			bot: record.bot,
-			status: record.status,
+			bot: saved.bot.bot,
+			status: saved.bot.status,
 		}),
 	);
 
-	return json({ ok: true, bot: record });
-}
-
-function configuredBots(env: Env): string[] {
-	const raw = typeof env.BOTS === "string" ? env.BOTS : "";
-	const seen = new Set<string>();
-	const names: string[] = [];
-	for (const part of raw.split(",")) {
-		const bot = parseBot(part);
-		if (!bot || seen.has(bot)) continue;
-		seen.add(bot);
-		names.push(bot);
-	}
-	return names.length > 0 ? names : [...FALLBACK_BOTS];
-}
-
-async function listBots(kv: KVNamespace, starters: readonly string[]): Promise<BotRecord[]> {
-	const names = await ensureSeed(kv, starters);
-	const records = await Promise.all(
-		names.map(async (name) => {
-			const raw = await kv.get(botKey(name));
-			if (raw === null) return seedRecord(name, new Date().toISOString());
-			return parseStored(raw, name);
-		}),
-	);
-	return records;
-}
-
-async function ensureSeed(kv: KVNamespace, starters: readonly string[]): Promise<string[]> {
-	const existing = await readIndex(kv);
-	if (existing) return existing;
-
-	const started = new Date().toISOString();
-	await Promise.all(
-		starters.map(async (bot) => {
-			const key = botKey(bot);
-			if ((await kv.get(key)) === null) {
-				await kv.put(key, JSON.stringify(seedRecord(bot, started)));
-			}
-		}),
-	);
-	const names = [...starters];
-	await kv.put(INDEX_KEY, JSON.stringify(names));
-	console.log(JSON.stringify({ event: "seeded", count: names.length }));
-	return names;
-}
-
-async function rememberBot(
-	kv: KVNamespace,
-	bot: string,
-	starters: readonly string[],
-): Promise<void> {
-	const names = (await readIndex(kv)) ?? [...starters];
-	if (names.includes(bot)) return;
-	names.push(bot);
-	await kv.put(INDEX_KEY, JSON.stringify(names));
-}
-
-async function readIndex(kv: KVNamespace): Promise<string[] | null> {
-	const raw = await kv.get(INDEX_KEY);
-	if (raw === null) return null;
-	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
-			return null;
-		}
-		const seen = new Set<string>();
-		const names: string[] = [];
-		for (const name of parsed) {
-			if (seen.has(name)) continue;
-			seen.add(name);
-			names.push(name);
-		}
-		return names.length > 0 ? names : null;
-	} catch {
-		return null;
-	}
-}
-
-function parsePost(
-	value: unknown,
-): { ok: true; record: BotRecord } | { ok: false; error: string } {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return { ok: false, error: "body must be a JSON object" };
-	}
-	const body = value as Record<string, unknown>;
-
-	const bot = parseBot(body.bot);
-	if (!bot) {
-		return {
-			ok: false,
-			error:
-				"bot must be 1–40 letters or numbers, and can include spaces, dots, hyphens, and apostrophes",
-		};
-	}
-
-	if (typeof body.status !== "string" || !isStatus(body.status)) {
-		return { ok: false, error: "status must be idle, working, failed, or done" };
-	}
-
-	if (typeof body.task !== "string") {
-		return { ok: false, error: "task is required" };
-	}
-	const task = cleanTask(body.task);
-	if (task === null) {
-		return { ok: false, error: "task must be text, 200 characters or fewer" };
-	}
-
-	const started = parseStartedAt(body.started_at);
-	if (!started) {
-		return {
-			ok: false,
-			error: "started_at must be an ISO date, like 2026-10-18T10:00:00Z",
-		};
-	}
-
-	return {
-		ok: true,
-		record: { bot, status: body.status, task, started_at: started },
-	};
-}
-
-function parseBot(value: unknown): string | null {
-	if (typeof value !== "string") return null;
-	const bot = value.trim();
-	if (!BOT_NAME.test(bot)) return null;
-	return bot;
-}
-
-function isStatus(value: string): value is Status {
-	return (STATUSES as readonly string[]).includes(value);
-}
-
-function cleanTask(value: string): string | null {
-	const task = value.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();
-	if (task.length > 200) return null;
-	if (/[\u0000-\u001F\u007F]/.test(task)) return null;
-	return task;
-}
-
-function parseStartedAt(value: unknown): string | null {
-	if (typeof value !== "string" || value.trim() === "") return null;
-	const ms = Date.parse(value);
-	if (Number.isNaN(ms)) return null;
-	return new Date(ms).toISOString();
-}
-
-function parseStored(raw: string, fallbackName: string): BotRecord {
-	try {
-		const value: unknown = JSON.parse(raw);
-		if (typeof value !== "object" || value === null) {
-			return seedRecord(fallbackName, new Date().toISOString());
-		}
-		const record = value as Partial<BotRecord>;
-		if (typeof record.status !== "string" || !isStatus(record.status)) {
-			return seedRecord(fallbackName, new Date().toISOString());
-		}
-		return {
-			bot: typeof record.bot === "string" && record.bot ? record.bot : fallbackName,
-			status: record.status,
-			task: typeof record.task === "string" ? record.task : "",
-			started_at:
-				typeof record.started_at === "string"
-					? record.started_at
-					: new Date().toISOString(),
-		};
-	} catch {
-		return seedRecord(fallbackName, new Date().toISOString());
-	}
-}
-
-function seedRecord(bot: string, startedAt: string): BotRecord {
-	return { bot, status: "idle", task: "", started_at: startedAt };
-}
-
-function botKey(name: string): string {
-	return `bot:${name}`;
+	return json({ ok: true, bot: saved.bot });
 }
 
 function normalizePath(pathname: string): string {

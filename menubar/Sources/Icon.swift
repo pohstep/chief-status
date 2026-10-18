@@ -7,7 +7,7 @@ enum ChiefPalette {
     static let eyeOnGrey = NSColor(srgbRed: 40.0 / 255.0, green: 40.0 / 255.0, blue: 42.0 / 255.0, alpha: 1)
     static let red = NSColor(srgbRed: 229.0 / 255.0, green: 72.0 / 255.0, blue: 77.0 / 255.0, alpha: 1)
     static let eyeOnRed = NSColor(srgbRed: 42.0 / 255.0, green: 16.0 / 255.0, blue: 18.0 / 255.0, alpha: 1)
-    static let done = NSColor(srgbRed: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
+    static let done = NSColor(srgbRed: 46.0 / 255.0, green: 184.0 / 255.0, blue: 102.0 / 255.0, alpha: 1)
 }
 
 enum BarTone: Equatable {
@@ -256,7 +256,7 @@ enum FaceMotion {
         pose.squashY = 1 + 0.035 * wave
         pose.squashX = 1 - 0.035 * wave
 
-        guard let move else { return pose }
+        guard let move = move else { return pose }
         let progress = unit(time, start: moveStart, duration: moveDuration)
         let env = sin(.pi * progress)
         pose.bob *= (1 - env)

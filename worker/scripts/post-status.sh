@@ -3,7 +3,12 @@
 #
 #   export CHIEF_STATUS_URL="https://chief-status.<your-subdomain>.workers.dev"
 #   export CHIEF_STATUS_TOKEN="the password you gave the worker"
+#   export CHIEF_STATUS_BOT_URL="https://example.com/agent1"   # optional chat link
+#   export CHIEF_STATUS_BOT_COLOR="#3B82F6"                    # optional #RRGGBB
 #   ./post-status.sh Agent1 working "drafting the homepage"
+#
+# started_at is sent only for "working". done, failed and idle let the feed keep
+# the clock from the working post, which is what today's durations are based on.
 #
 # STATUS is one of: idle, working, failed, done
 # The address can be the worker root or the full /status address.
@@ -51,11 +56,25 @@ escape() {
 	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
-BODY=$(printf '{"bot":"%s","status":"%s","task":"%s","started_at":"%s"}' \
+started_field=""
+if [ "$STATUS" = "working" ]; then
+	started_field=$(printf ',"started_at":"%s"' "$STARTED")
+fi
+url_field=""
+if [ -n "${CHIEF_STATUS_BOT_URL:-}" ]; then
+	url_field=$(printf ',"url":"%s"' "$(escape "$CHIEF_STATUS_BOT_URL")")
+fi
+color_field=""
+if [ -n "${CHIEF_STATUS_BOT_COLOR:-}" ]; then
+	color_field=$(printf ',"color":"%s"' "$(escape "$CHIEF_STATUS_BOT_COLOR")")
+fi
+BODY=$(printf '{"bot":"%s","status":"%s","task":"%s"%s%s%s}' \
 	"$(escape "$BOT")" \
 	"$(escape "$STATUS")" \
 	"$(escape "$TASK")" \
-	"$STARTED")
+	"$started_field" \
+	"$url_field" \
+	"$color_field")
 
 tmp=$(mktemp)
 code=$(curl -sS -o "$tmp" -w "%{http_code}" -X POST "$URL" \

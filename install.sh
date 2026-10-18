@@ -67,6 +67,11 @@ mkdir -p "$CONFIG_DIR"
 
 write_plist() {
 	escaped="$(xml_escape "$1")"
+	# Re-running install with an address must not turn a saved alert back off.
+	alert="false"
+	if [ -f "$CONFIG" ] && grep -A1 "<key>alertOnFailure</key>" "$CONFIG" | grep -q "<true/>"; then
+		alert="true"
+	fi
 	cat >"$CONFIG" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -74,6 +79,8 @@ write_plist() {
 <dict>
 	<key>feedURL</key>
 	<string>${escaped}</string>
+	<key>alertOnFailure</key>
+	<${alert}/>
 </dict>
 </plist>
 EOF
@@ -92,6 +99,7 @@ if ! swiftc \
 	-O \
 	-framework AppKit \
 	-framework SwiftUI \
+	-framework UserNotifications \
 	-o "$BUILD/ChiefStatus" \
 	"$ROOT/menubar/Sources/Config.swift" \
 	"$ROOT/menubar/Sources/Icon.swift" \
