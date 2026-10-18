@@ -470,7 +470,7 @@ struct StatusPopoverView: View {
             swatchRow(Array(IconSwatch.all.suffix(5)))
             ColorPicker("Custom", selection: customIconColor, supportsOpacity: false)
                 .font(.system(size: 12))
-            Text("\(model.iconColor.title). The working cube uses this. Idle, failed, stale and needs-you keep their colours.")
+            Text("\(model.iconColor.title). The working, stale 404 and needs-you ? cubes use this. Idle grey and failed red stay as they are.")
                 .font(.system(size: 11))
                 .foregroundStyle(PanelTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1343,12 +1343,12 @@ private struct MiniFace: View {
     var body: some View {
         let unit = size / 32
         let lost = status == "lost"
-        let face = lost ? PanelTheme.lostFace : fill
-        let top = Color(nsColor: BotAccent.mix(face, with: .white, amount: lost ? 0.14 : 0.28))
+        let face = fill
+        let top = Color(nsColor: BotAccent.mix(face, with: .white, amount: 0.28))
         let base = Color(nsColor: face)
-        let edge = Color(nsColor: BotAccent.mix(face, with: .black, amount: lost ? 0.6 : 0.22))
-        let ink = lost ? Color.white : BotAccent.featureInk(face)
-        let lightFace = lost ? false : BotAccent.isLight(face)
+        let edge = Color(nsColor: BotAccent.mix(face, with: .black, amount: 0.22))
+        let ink = BotAccent.featureInk(face)
+        let lightFace = BotAccent.isLight(face)
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8.5 * unit, style: .continuous)
                 .fill(edge)
@@ -1367,7 +1367,7 @@ private struct MiniFace: View {
                 )
                 .frame(width: size, height: 28.4 * unit)
             Capsule()
-                .fill(lightFace ? Color.black.opacity(0.14) : Color.white.opacity(lost ? 0.22 : 0.62))
+                .fill(lightFace ? Color.black.opacity(0.14) : Color.white.opacity(0.62))
                 .frame(width: 14 * unit, height: 3.4 * unit)
                 .offset(x: 6 * unit, y: 4 * unit)
             if size >= 20, !lost {
@@ -1377,11 +1377,6 @@ private struct MiniFace: View {
                     .offset(x: (24 - 1.3) * unit, y: (5.7 - 1.3) * unit)
             }
             features(unit, ink: ink, lightFace: lightFace)
-            if lost {
-                RoundedRectangle(cornerRadius: 8.5 * unit, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.32), lineWidth: 1)
-                    .frame(width: size, height: size)
-            }
         }
         .frame(width: size, height: size, alignment: .topLeading)
         .shadow(color: Color.black.opacity(0.18), radius: 1.5, y: 1)
@@ -1816,8 +1811,7 @@ enum PreviewRenderer {
                         tone: states[index].tone,
                         pose: IconPose(),
                         staleDot: states[index].staleDot,
-                        working: .palette,
-                        barIsLight: !dark
+                        working: .palette
                     ))
                     .frame(width: 18, height: 18)
                 }
@@ -1863,13 +1857,12 @@ enum PreviewRenderer {
                     Image(nsImage: StatusIcon.image(
                         tone: .orange,
                         pose: IconPose(),
-                        working: rows[index].working,
-                        barIsLight: !dark
+                        working: rows[index].working
                     ))
                     .frame(width: 48, height: 22)
-                    Image(nsImage: StatusIcon.image(tone: .black, pose: IconPose(), working: .palette))
+                    Image(nsImage: StatusIcon.image(tone: .black, pose: IconPose(), working: rows[index].working))
                         .frame(width: 48, height: 22)
-                    Image(nsImage: StatusIcon.image(tone: .indigo, pose: IconPose(), working: .palette))
+                    Image(nsImage: StatusIcon.image(tone: .indigo, pose: IconPose(), working: rows[index].working))
                         .frame(width: 72, height: 22)
                 }
             }

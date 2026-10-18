@@ -26,14 +26,14 @@
 
 ## What it does
 
-- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. It turns indigo with a **?** when a bot is waiting on you, and black with **404** on it when the only working bots have gone quiet.
+- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. It shows a **?** when a bot is waiting on you, and **404** when the only working bots have gone quiet. The working, **?** and **404** cubes use your icon colour (orange by default).
 - **One panel for the whole team.** Click the cube and a frosted panel drops down. Bots that are working get their own orange card, longest-running first. A failed bot gets a red row, a finished one a green check.
 - **Every bot has its own colour.** Each bot's face is filled with its own colour, so you can tell them apart in a second. The bot picks the colour itself the first time it reports (see [Colours](#colours)).
 - **Real job times.** Each card shows how long the job has been running. **Finished today** lists every job that finished today and how long it took.
 - **Live.** A change shows up within a second or two, with no refresh button.
 - **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure is spoken aloud ("Chief task failed") and shows a macOS banner. It is off until you turn it on.
 - **Stale warning.** A bot that has said "working" for over an hour gets a **stale?** tag, which usually means it forgot to say it was done.
-- **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes turns black with a **404** face and **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work.
+- **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes moves to a black card, its face (still in the bot's own colour) shows **404**, and it says **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work.
 - **A bot waiting on you gets its own card.** A bot that posts `needs_input` (a question, an approval) gets an indigo card with a **?** face at the very top, labelled **needs you · 5m ago**. It never turns stale. The header counts it too.
 - **Click to open the chat.** If a bot gives a link to its chat, clicking its row opens that chat. You can also keep links on your Mac only, in `links.json` (see [Chat links on your Mac](#chat-links-on-your-mac)).
 - **Check on it, or Clear.** Every black maybe-stale card has two small buttons, always visible: **Check on it** opens that bot's chat. **Clear** hides the warning on this Mac only: the bot stays working, the card goes back to orange with **last update 36m ago**, and the warning comes back if it stays quiet another 30 minutes. Nothing is posted. Right-click a card for the same choices. The header counts quiet bots apart, like `1 working · 2 maybe stale`.
@@ -98,7 +98,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 
 | Do this | To get this |
 | --- | --- |
-| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. Indigo **?**: a bot needs you. Black **404**: the working bots have all gone quiet. A small black dot on the orange cube: one of them has |
+| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. **?** on the cube: a bot needs you. **404** on the cube: the working bots have all gone quiet. A small black dot on the working cube: one of them has |
 | Click the cube | Open or close the panel |
 | Click a bot's row | Open that bot's chat, if it sent a link |
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
@@ -111,7 +111,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | **last update 36m ago** on an orange card | You cleared its warning. It is still working, as far as the feed knows |
 | Click **Quit**, or press `⌘Q` | Close the app |
 
-**Icon colour** (Settings) replaces the orange working cube only. Default keeps today's look. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle, red failed, the black **404**, and the indigo **?** stay their own colours. A colour that fades into the menu bar, including white on a light bar, keeps that colour and gains a thin contrasting outline.
+**Icon colour** (Settings) sets the colour of the working cube, the **404** cube and the **?** cube. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404** and **?** marks, and the eyes, are drawn dark or white, whichever reads better on your colour. There is no outline.
 
 <p align="center">
   <img src="docs/panel.png" width="328" alt="The panel up close: a fresh orange working card, a black maybe-stale card with a 404 face, and each row showing when that bot last posted">
@@ -295,7 +295,7 @@ Light faces (like white or yellow) get dark eyes and dark faces get light eyes, 
 - Avoid plain orange, red and green for bot colours. Those are the status colours, and the face would blend into its card.
 - To change a bot's colour, change it in the bot's instruction. Its next post updates the face.
 - To go back to the automatic colour, remove the colour from the bot's instruction and send one post with an empty colour, using the `curl` line in [docs/BOT-SETUP.md](docs/BOT-SETUP.md) with `"color":""`. The script on its own never clears a colour; leaving the colour out just keeps the saved one.
-- The menu bar cube shows status only: grey, orange, red, indigo or black. Bot colours only appear in the panel.
+- The menu bar cube shows status only: grey for idle, red for failed, and your icon colour for working, **?** and **404**. Bot colours only appear in the panel.
 
 ### Post a status by hand
 

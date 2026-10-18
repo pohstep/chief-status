@@ -8,12 +8,8 @@ enum ChiefPalette {
     static let red = NSColor(srgbRed: 229.0 / 255.0, green: 72.0 / 255.0, blue: 77.0 / 255.0, alpha: 1)
     static let eyeOnRed = NSColor(srgbRed: 42.0 / 255.0, green: 16.0 / 255.0, blue: 18.0 / 255.0, alpha: 1)
     static let done = NSColor(srgbRed: 46.0 / 255.0, green: 184.0 / 255.0, blue: 102.0 / 255.0, alpha: 1)
-    /// Maybe stale: a lost-signal black. The light rim keeps it visible on a dark menu bar.
+    /// The small "another bot is stale" dot on the working cube.
     static let black = NSColor(srgbRed: 17.0 / 255.0, green: 17.0 / 255.0, blue: 19.0 / 255.0, alpha: 1)
-    static let blackRim = NSColor(white: 1, alpha: 0.55)
-    static let blackInk = NSColor(white: 1, alpha: 1)
-    /// Needs input: indigo #4F5BE8, hue 235°, at least 19° from every bot colour in the feed.
-    static let indigo = NSColor(srgbRed: 79.0 / 255.0, green: 91.0 / 255.0, blue: 232.0 / 255.0, alpha: 1)
 }
 
 enum BarTone: Equatable {
@@ -27,8 +23,9 @@ enum BarTone: Equatable {
 }
 
 /// What the menu bar cube shows, in priority order:
-/// any failed → red. Else any bot needs input → indigo "?" cube. Else any working bot that posted in the last 30 min → orange,
-/// plus a small black dot if another working bot is stale. Else any stale working bot → black 404 cube.
+/// any failed → red. Else any bot needs input → "?" cube. Else any working bot that posted in the last 30 min → working cube,
+/// plus a small black dot if another working bot is stale. Else any stale working bot → "404" cube.
+/// The working, "?" and "404" cubes all use the icon colour from Settings (Default is today's orange).
 /// Else grey (idle or finished).
 struct BarState: Equatable {
     var tone: BarTone
@@ -368,9 +365,9 @@ enum FaceMotion {
     }
 }
 
-/// Fill for the working cube only. Idle, failed, stale and needs-you ignore this.
+/// Fill for the working, stale "404" and needs-you "?" cubes. Idle grey and failed red ignore this.
 enum WorkingFill {
-    /// Today's orange, with no extra outline.
+    /// Today's orange.
     case palette
     /// The colour saved in Settings.
     case stored
@@ -381,25 +378,27 @@ enum WorkingFill {
 enum StatusIcon {
     static let pointSize: CGFloat = 18
 
-    /// `barIsLight` forces the menu bar used for the contrast outline. Nil follows Appearance.
     static func image(
         tone: BarTone,
         pose: IconPose,
         staleDot: Bool = false,
-        working: WorkingFill = .stored,
-        barIsLight: Bool? = nil
+        working: WorkingFill = .stored
     ) -> NSImage {
         switch tone {
         case .black:
+            let fill = IconInk.fill(working)
+            let ink = IconInk.ink(on: fill)
             let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-                paintMark("404", fill: ChiefPalette.black, rim: ChiefPalette.blackRim, size: 7.5)
+                paintMark("404", fill: fill, ink: ink, size: 7.5)
                 return true
             }
             image.isTemplate = false
             return image
         case .indigo:
+            let fill = IconInk.fill(working)
+            let ink = IconInk.ink(on: fill)
             let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-                paintMark("?", fill: ChiefPalette.indigo, rim: NSColor(white: 1, alpha: 0.35), size: 12)
+                paintMark("?", fill: fill, ink: ink, size: 12)
                 return true
             }
             image.isTemplate = false
@@ -410,30 +409,24 @@ enum StatusIcon {
 
         let paintFill: NSColor
         let paintEye: NSColor
-        let paintOutline: NSColor?
         switch tone {
         case .orange:
-            let resolved = IconContrast.working(working, barIsLight: barIsLight)
-            paintFill = resolved.fill
-            paintEye = resolved.eye
-            paintOutline = resolved.outline
+            paintFill = IconInk.fill(working)
+            paintEye = IconInk.ink(on: paintFill)
         case .red:
             paintFill = ChiefPalette.red
             paintEye = ChiefPalette.eyeOnRed
-            paintOutline = nil
         case .grey:
             paintFill = ChiefPalette.grey
             paintEye = ChiefPalette.eyeOnGrey
-            paintOutline = nil
         case .black, .indigo:
             paintFill = ChiefPalette.orange
             paintEye = ChiefPalette.eye
-            paintOutline = nil
         }
 
         let pose = pose
         let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-            paint(fill: paintFill, eye: paintEye, outline: paintOutline, pose: pose)
+            paint(fill: paintFill, eye: paintEye, pose: pose)
             if staleDot {
                 paintStaleDot()
             }
@@ -445,8 +438,7 @@ enum StatusIcon {
 
     /// 18pt face, inset 1pt, corner radius 5. Eyes are 2.2×4.6pt ovals with a 3pt gap,
     /// centred as a pair on x = 9, bottoms at y = 8.6 before blink and bob.
-    /// A low-contrast working colour gets a thin outline. The fill itself is not changed.
-    private static func paint(fill: NSColor, eye: NSColor, outline: NSColor?, pose: IconPose) {
+    private static func paint(fill: NSColor, eye: NSColor, pose: IconPose) {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         if let graphics = NSGraphicsContext.current {
@@ -467,12 +459,6 @@ enum StatusIcon {
         let face = NSRect(x: 1, y: 1 + bob, width: 16, height: 16)
         fill.setFill()
         NSBezierPath(roundedRect: face, xRadius: 5, yRadius: 5).fill()
-        if let outline = outline {
-            let rim = NSBezierPath(roundedRect: face.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.6, yRadius: 4.6)
-            outline.setStroke()
-            rim.lineWidth = 1
-            rim.stroke()
-        }
 
         let eyeWidth: CGFloat = 2.2
         let fullHeight: CGFloat = 4.6
@@ -488,26 +474,22 @@ enum StatusIcon {
         NSBezierPath(ovalIn: NSRect(x: rightX, y: eyeY, width: eyeWidth, height: height)).fill()
     }
 
-    /// Black 404 cube or indigo "?" cube: same 16pt face, a light rim so it shows on a dark menu bar,
-    /// and the mark where the eyes go.
-    private static func paintMark(_ mark: String, fill: NSColor, rim: NSColor, size fontSize: CGFloat) {
+    /// Stale "404" cube or needs-you "?" cube: the same 16pt face in the icon colour,
+    /// with the mark where the eyes go, dark or white to suit the fill. No outline.
+    private static func paintMark(_ mark: String, fill: NSColor, ink: NSColor, size fontSize: CGFloat) {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         if let graphics = NSGraphicsContext.current {
             graphics.shouldAntialias = true
         }
         let face = NSRect(x: 1, y: 1, width: 16, height: 16)
-        let shape = NSBezierPath(roundedRect: face.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.6, yRadius: 4.6)
         fill.setFill()
-        shape.fill()
-        rim.setStroke()
-        shape.lineWidth = 1
-        shape.stroke()
+        NSBezierPath(roundedRect: face, xRadius: 5, yRadius: 5).fill()
 
         let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .heavy)
         let text = NSAttributedString(string: mark, attributes: [
             .font: font,
-            .foregroundColor: ChiefPalette.blackInk,
+            .foregroundColor: ink,
             .kern: -0.2,
         ])
         let size = text.size()
@@ -544,66 +526,29 @@ enum StatusIcon {
     }
 }
 
-/// Contrast for a chosen working colour against the menu bar. Default orange is not passed through here.
-enum IconContrast {
-    /// Same fills the preview sheets use behind the cubes.
-    static let lightBar = NSColor(srgbRed: 0.93, green: 0.93, blue: 0.95, alpha: 1)
-    static let darkBar = NSColor(srgbRed: 0.12, green: 0.12, blue: 0.14, alpha: 1)
-
-    static func working(_ working: WorkingFill, barIsLight: Bool?) -> (fill: NSColor, eye: NSColor, outline: NSColor?) {
+/// The icon colour from Settings, and a dark or white ink that reads on it (eyes, "404", "?").
+enum IconInk {
+    static func fill(_ working: WorkingFill) -> NSColor {
         switch working {
         case .palette:
-            return (ChiefPalette.orange, ChiefPalette.eye, nil)
+            return ChiefPalette.orange
         case .stored:
             let choice = IconColorSetting.load()
             if choice.isDefault {
-                return (ChiefPalette.orange, ChiefPalette.eye, nil)
+                return ChiefPalette.orange
             }
-            return painted(choice.nsColor, barIsLight: barIsLight)
+            return choice.nsColor
         case .colour(let fill):
-            return painted(fill, barIsLight: barIsLight)
+            return fill
         }
     }
 
-    /// Dark eyes when they still show on the fill. A dark custom colour gets white eyes.
-    /// The fill is the user's colour either way.
-    private static func painted(_ fill: NSColor, barIsLight: Bool?) -> (fill: NSColor, eye: NSColor, outline: NSColor?) {
-        let eye: NSColor
-        if ratio(luminance(fill), luminance(ChiefPalette.eye)) >= 3 {
-            eye = ChiefPalette.eye
-        } else {
-            eye = NSColor.white
-        }
-        return (fill, eye, outline(for: fill, barIsLight: barIsLight))
-    }
-
-    /// Nil when the fill already clears the menu bar. Otherwise a thin opposite rim.
-    static func outline(for fill: NSColor, barIsLight: Bool?) -> NSColor? {
-        let light = menuBarIsLight(override: barIsLight)
-        let bar = light ? lightBar : darkBar
-        if ratio(luminance(fill), luminance(bar)) >= 3 {
-            return nil
-        }
-        if light {
-            return NSColor(srgbRed: 0.10, green: 0.10, blue: 0.12, alpha: 0.92)
-        }
-        return NSColor(white: 1, alpha: 0.75)
-    }
-
-    /// Light, Dark, or the system menu bar when Appearance is System.
-    static func menuBarIsLight(override: Bool?) -> Bool {
-        if let forced = override {
-            return forced
-        }
-        switch AppearanceChoice.stored() {
-        case .light:
-            return true
-        case .dark:
-            return false
-        case .system:
-            let appearance = NSAppearance.current ?? NSApp.effectiveAppearance
-            return appearance.bestMatch(from: [.aqua, .darkAqua]) != .darkAqua
-        }
+    /// Dark ink when it contrasts more with the fill than white does, otherwise white.
+    static func ink(on fill: NSColor) -> NSColor {
+        let surface = luminance(fill)
+        let dark = ratio(surface, luminance(ChiefPalette.eye))
+        let white = ratio(surface, 1)
+        return dark >= white ? ChiefPalette.eye : NSColor.white
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
