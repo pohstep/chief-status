@@ -359,15 +359,14 @@ struct IconColorSetting: Equatable {
     }
 
     static func hex(from color: NSColor) -> String {
-        let converted = color.usingColorSpace(.sRGB)
-        let rgb = converted ?? color
+        guard let rgb = color.usingColorSpace(.sRGB) else {
+            return "#F39C28"
+        }
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
-        if !rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
-            return "#F39C28"
-        }
+        rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         return String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
     }
 

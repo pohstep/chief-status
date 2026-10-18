@@ -607,15 +607,14 @@ enum IconContrast {
     }
 
     static func luminance(_ color: NSColor) -> CGFloat {
-        let converted = color.usingColorSpace(.sRGB)
-        let rgb = converted ?? color
+        guard let rgb = color.usingColorSpace(.sRGB) else {
+            return 0
+        }
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
-        if !rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
-            return 0
-        }
+        rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
     }
 

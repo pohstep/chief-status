@@ -328,36 +328,38 @@ struct StatusPopoverView: View {
                     .foregroundStyle(PanelTheme.ink2)
             }
             setupHelp
-            TextField(
-                "Feed address",
-                text: $model.draftURL,
-                prompt: Text("https://your-worker.workers.dev/status")
-            )
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12))
-            .onSubmit { model.saveAddress() }
-            TextField(
-                "Post password",
-                text: $model.postPassword,
-                prompt: Text("The password bots use to post")
-            )
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12))
-            Text("Shown here so you can copy the bot prompt. Not saved.")
-                .font(.system(size: 11))
-                .foregroundStyle(PanelTheme.ink2)
-            SecureField(
-                "Read token (optional)",
-                text: $model.readToken,
-                prompt: Text("Read token (optional)")
-            )
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12))
-            .onSubmit { model.commitReadToken() }
-            Text("Only if your feed is locked. Saved on this Mac and sent when the app reads the feed.")
-                .font(.system(size: 11))
-                .foregroundStyle(PanelTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
+            Group {
+                TextField(
+                    "Feed address",
+                    text: $model.draftURL,
+                    prompt: Text("https://your-worker.workers.dev/status")
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .onSubmit { model.saveAddress() }
+                TextField(
+                    "Post password",
+                    text: $model.postPassword,
+                    prompt: Text("The password bots use to post")
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                Text("Shown here so you can copy the bot prompt. Not saved.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.ink2)
+                SecureField(
+                    "Read token (optional)",
+                    text: $model.readToken,
+                    prompt: Text("Read token (optional)")
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .onSubmit { model.commitReadToken() }
+                Text("Only if your feed is locked. Saved on this Mac and sent when the app reads the feed.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let prompt = SetupShare.botPrompt(feed: shareFeed, password: model.postPassword) {
                 Text("Bot prompt")
                     .font(.system(size: 12, weight: .semibold))
@@ -405,49 +407,51 @@ struct StatusPopoverView: View {
                         .controlSize(.small)
                 }
             }
-            Toggle("Open at login", isOn: Binding(
-                get: { model.openAtLogin },
-                set: { model.setOpenAtLogin($0) }
-            ))
-            .font(.system(size: 12))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            if let note = model.loginNote {
-                Text(note)
+            Group {
+                Toggle("Open at login", isOn: Binding(
+                    get: { model.openAtLogin },
+                    set: { model.setOpenAtLogin($0) }
+                ))
+                .font(.system(size: 12))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                if let note = model.loginNote {
+                    Text(note)
+                        .font(.system(size: 11))
+                        .foregroundStyle(PanelTheme.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Toggle("Alert when a bot fails", isOn: Binding(
+                    get: { model.alertOnFailure },
+                    set: { model.setAlertOnFailure($0) }
+                ))
+                .font(.system(size: 12))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                HStack(spacing: 8) {
+                    Text("Appearance")
+                        .font(.system(size: 12))
+                        .foregroundStyle(PanelTheme.ink)
+                    Picker("Appearance", selection: Binding(
+                        get: { model.appearance },
+                        set: { model.setAppearance($0) }
+                    )) {
+                        ForEach(AppearanceChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(width: 180)
+                }
+                .frame(height: 24)
+                Text(model.alertNote ?? "Off unless you turn it on. A new failure is spoken aloud and shows a banner.")
                     .font(.system(size: 11))
                     .foregroundStyle(PanelTheme.ink2)
                     .fixedSize(horizontal: false, vertical: true)
+                iconColour
             }
-            Toggle("Alert when a bot fails", isOn: Binding(
-                get: { model.alertOnFailure },
-                set: { model.setAlertOnFailure($0) }
-            ))
-            .font(.system(size: 12))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            HStack(spacing: 8) {
-                Text("Appearance")
-                    .font(.system(size: 12))
-                    .foregroundStyle(PanelTheme.ink)
-                Picker("Appearance", selection: Binding(
-                    get: { model.appearance },
-                    set: { model.setAppearance($0) }
-                )) {
-                    ForEach(AppearanceChoice.allCases) { choice in
-                        Text(choice.title).tag(choice)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .frame(width: 180)
-            }
-            .frame(height: 24)
-            Text(model.alertNote ?? "Off unless you turn it on. A new failure is spoken aloud and shows a banner.")
-                .font(.system(size: 11))
-                .foregroundStyle(PanelTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-            iconColour
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.top, 4)
