@@ -1819,20 +1819,20 @@ private struct NeedsYouSettingsSection: View {
             Text("When a bot needs you")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(PanelTheme.ink)
-            needsToggle("Shake animation", on: model.needsYouShake, set: { model.setNeedsYouShake($0) })
-            needsToggle("Banner", on: model.needsYouBanner, set: { model.setNeedsYouBanner($0) })
-            needsToggle("Voice", on: model.needsYouVoice, set: { model.setNeedsYouVoice($0) })
-            reminderRow
-            notes
-        }
-        .padding(.top, 4)
-    }
-
-    private func needsToggle(_ title: String, on: Bool, set: @escaping (Bool) -> Void) -> some View {
-        Toggle(title, isOn: Binding(get: { on }, set: set))
+            Toggle("Sound alert when a bot needs you", isOn: Binding(
+                get: { model.needsYouSound },
+                set: { model.setNeedsYouSound($0) }
+            ))
             .font(.system(size: 12))
             .toggleStyle(.switch)
             .controlSize(.small)
+            reminderRow
+            Text("Speaks once when a bot starts waiting. A reminder, if you turn one on, repeats that spoken line and nothing else.")
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
     }
 
     private var reminderRow: some View {
@@ -1854,24 +1854,11 @@ private struct NeedsYouSettingsSection: View {
         }
         .frame(height: 24)
     }
-
-    private var notes: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("The cube shakes through the preset colours while a bot is waiting, with a ? or an ! and a count. Off, or Reduce Motion on, it stays still in your icon colour. A banner and a spoken line fire when the wait starts, then again until the bot posts a different state.")
-                .fixedSize(horizontal: false, vertical: true)
-            if model.needsYouBanner && model.needsYouBannerDenied {
-                Text("Banners are off in System Settings → Notifications → Chief Status. Voice still speaks if it is on.")
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .font(.system(size: 11))
-        .foregroundStyle(PanelTheme.ink2)
-    }
 }
 
 /// `ChiefStatus --render-preview <folder>`: sample panels in light and dark, the 404 face at 28 and 20 pt,
-/// every menu bar cube, the icon colour presets, the needs-you alert frames, the needs-you Settings section,
-/// and the About section. Nothing is read from or sent to the feed.
+/// every menu bar cube, the icon colour presets, and the About section.
+/// Nothing is read from or sent to the feed.
 enum PreviewRenderer {
     static func run(folder: String) -> Int32 {
         let directory = URL(fileURLWithPath: (folder as NSString).expandingTildeInPath, isDirectory: true)
@@ -1924,10 +1911,7 @@ enum PreviewRenderer {
                         tone: states[index].tone,
                         pose: IconPose(),
                         staleDot: states[index].staleDot,
-                        working: .palette,
-                        needsCount: states[index].needsCount,
-                        needsApproval: states[index].needsApproval,
-                        badgeOnDark: dark
+                        working: .palette
                     ))
                     .frame(width: 18, height: 18)
                 }
@@ -1939,12 +1923,6 @@ enum PreviewRenderer {
 
             let colours = iconColourSheet(dark: dark)
             ok = write(colours, size: NSSize(width: 324, height: 380), dark: dark, to: directory.appendingPathComponent("icon-colours-\(name).png")) && ok
-
-            let frames = alertFrameSheet(dark: dark)
-            ok = write(frames, size: NSSize(width: 520, height: 118), dark: dark, to: directory.appendingPathComponent("needs-you-frames-\(name).png")) && ok
-
-            let needsSettings = needsYouSettingsSheet(dark: dark)
-            ok = write(needsSettings, size: NSSize(width: 680, height: 400), dark: dark, to: directory.appendingPathComponent("needs-you-settings-\(name).png")) && ok
 
             let about = aboutSheet(dark: dark)
             ok = write(about, size: NSSize(width: 680, height: 540), dark: dark, to: directory.appendingPathComponent("about-\(name).png")) && ok
@@ -1990,9 +1968,7 @@ enum PreviewRenderer {
                     Image(nsImage: StatusIcon.image(
                         tone: .indigo,
                         pose: IconPose(),
-                        working: rows[index].working,
-                        needsCount: 1,
-                        badgeOnDark: dark
+                        working: rows[index].working
                     ))
                         .frame(width: 72, height: 22)
                 }
@@ -2001,103 +1977,6 @@ enum PreviewRenderer {
         .padding(12)
         .frame(width: 324, height: 380, alignment: .topLeading)
         .background(dark ? Color(red: 0.12, green: 0.12, blue: 0.14) : Color(red: 0.93, green: 0.93, blue: 0.95))
-    }
-
-    private struct AlertSample {
-        var title: String
-        var image: NSImage
-    }
-
-    /// Input and approval frames, plus the still fallback in the icon colour.
-    private static func alertSamples(dark: Bool) -> [AlertSample] {
-        var items: [AlertSample] = []
-        let moving: [(String, TimeInterval, Bool, Int)] = [
-            ("Input", 0.25, false, 2),
-            ("Input", 2.4, false, 2),
-            ("Input", 4.8, false, 2),
-            ("Approval", 0.2, true, 1),
-            ("Approval", 3.1, true, 1),
-        ]
-        for item in moving {
-            let image = StatusIcon.image(
-                tone: .indigo,
-                pose: NeedsYouMotion.pose(time: item.1, approval: item.2),
-                needsCount: item.3,
-                needsApproval: item.2,
-                needsFill: NeedsYouMotion.fill(at: item.1),
-                badgeOnDark: dark
-            )
-            items.append(AlertSample(title: item.0, image: image))
-        }
-        let stillInput = StatusIcon.image(
-            tone: .indigo,
-            pose: IconPose(),
-            working: .palette,
-            needsCount: 2,
-            needsApproval: false,
-            badgeOnDark: dark
-        )
-        items.append(AlertSample(title: "Still ?", image: stillInput))
-        let stillApproval = StatusIcon.image(
-            tone: .indigo,
-            pose: IconPose(),
-            working: .palette,
-            needsCount: 1,
-            needsApproval: true,
-            badgeOnDark: dark
-        )
-        items.append(AlertSample(title: "Still !", image: stillApproval))
-        let blue = IconColorSetting.color(hex: "#3A86F4") ?? ChiefPalette.orange
-        let stillBlue = StatusIcon.image(
-            tone: .indigo,
-            pose: IconPose(),
-            working: .colour(blue),
-            needsCount: 2,
-            needsApproval: false,
-            badgeOnDark: dark
-        )
-        items.append(AlertSample(title: "Still, blue", image: stillBlue))
-        return items
-    }
-
-    private static func alertFrameSheet(dark: Bool) -> some View {
-        let samples = alertSamples(dark: dark)
-        let ink = dark ? Color.white : Color.black
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(dark ? "Dark menu bar" : "Light menu bar")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ink)
-            HStack(alignment: .top, spacing: 6) {
-                ForEach(0 ..< samples.count, id: \.self) { index in
-                    VStack(spacing: 4) {
-                        Image(nsImage: samples[index].image)
-                            .frame(width: 22, height: 22)
-                        Text(samples[index].title)
-                            .font(.system(size: 8))
-                            .foregroundStyle(ink)
-                            .multilineTextAlignment(.center)
-                            .frame(width: 54)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .frame(width: 520, height: 118, alignment: .topLeading)
-        .background(dark ? Color(red: 0.12, green: 0.12, blue: 0.14) : Color(red: 0.93, green: 0.93, blue: 0.95))
-    }
-
-    private static func needsYouSettingsSheet(dark: Bool) -> some View {
-        let normal = StatusModel()
-        let denied = StatusModel()
-        denied.needsYouBannerDenied = true
-        let ink = dark ? Color.white : Color.black
-        return HStack(alignment: .top, spacing: 16) {
-            settingsColumn(model: normal, caption: "On by default", ink: ink)
-            settingsColumn(model: denied, caption: "Banners denied", ink: ink)
-        }
-        .padding(12)
-        .frame(width: 680, height: 400, alignment: .topLeading)
-        .background(dark ? Color(red: 0.16, green: 0.16, blue: 0.18) : Color(red: 0.93, green: 0.93, blue: 0.95))
     }
 
     /// About, before a check, up to date, an available release, and the offline line. No network call.
@@ -2136,17 +2015,6 @@ enum PreviewRenderer {
         }
         .padding(10)
         .frame(width: 318, height: 248, alignment: .topLeading)
-    }
-
-    private static func settingsColumn(model: StatusModel, caption: String, ink: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(caption)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ink)
-            NeedsYouSettingsSection(model: model)
-        }
-        .padding(10)
-        .frame(width: 316, alignment: .topLeading)
     }
 
     private static func sampleModel() -> StatusModel {

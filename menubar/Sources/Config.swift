@@ -510,12 +510,10 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
     }
 }
 
-/// Needs-you alerts. UserDefaults domain com.chiefstatus.menubar.
-/// Missing keys mean on, and a 5 minute reminder, so an existing install picks the feature up.
+/// Needs-you sound. UserDefaults domain com.chiefstatus.menubar.
+/// A missing sound key means on. A missing reminder means off.
 enum NeedsYouSettings {
-    static let shakeKey = "needsYouShake"
-    static let bannerKey = "needsYouBanner"
-    static let voiceKey = "needsYouVoice"
+    static let soundKey = "needsYouSound"
     static let reminderKey = "needsYouReminderMinutes"
     static let reminderChoices = [0, 2, 5, 10, 15]
 
@@ -528,13 +526,13 @@ enum NeedsYouSettings {
 
     static func storedReminder() -> Int {
         if UserDefaults.standard.object(forKey: reminderKey) == nil {
-            return 5
+            return 0
         }
         let value = UserDefaults.standard.integer(forKey: reminderKey)
         if reminderChoices.contains(value) {
             return value
         }
-        return 5
+        return 0
     }
 
     static func title(for minutes: Int) -> String {

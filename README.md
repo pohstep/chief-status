@@ -27,13 +27,13 @@
 
 ## What it does
 
-- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. While a bot is waiting on you it shakes and cycles colour, with a **?** or an **!** and a count (see [When a bot needs you](#when-a-bot-needs-you)). It shows **404** when the only working bots have gone quiet. The working and **404** cubes, and the still needs-you cube, use your icon colour (orange by default).
+- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. It shows a **?** when a bot is waiting on you, and **404** when the only working bots have gone quiet. The working, **?** and **404** cubes use your icon colour (orange by default).
 - **One panel for the whole team.** Click the cube and a frosted panel drops down. Bots that are working get their own orange card, longest-running first. A failed bot gets a red row, a finished one a green check.
 - **Every bot has its own colour.** Each bot's face is filled with its own colour, so you can tell them apart in a second. The bot picks the colour itself the first time it reports (see [Colours](#colours)).
 - **Real job times.** Each card shows how long the job has been running. **Finished today** lists every job that finished today and how long it took.
 - **Live.** A change shows up within a second or two, with no refresh button.
 - **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure is spoken aloud ("Chief task failed") and shows a macOS banner. It is off until you turn it on.
-- **Needs-you alert, on by default.** When a bot starts waiting, you get a banner and a spoken line, then a reminder until it posts something else. See [When a bot needs you](#when-a-bot-needs-you).
+- **A sound when a bot needs you, on by default.** When a bot starts waiting, the Mac speaks "<Bot> needs you", or "<Bot> needs your approval" when the post sets `approval`. It speaks once. A sound-only reminder is off until you turn it on. See [When a bot needs you](#when-a-bot-needs-you).
 - **Stale warning.** A bot that has said "working" for over an hour gets a **stale?** tag, which usually means it forgot to say it was done.
 - **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes moves to a black card, its face (still in the bot's own colour) shows **404**, and it says **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work.
 - **A bot waiting on you gets its own card.** A bot that posts `needs_input` (a question, an approval) gets an indigo card with a **?** face at the very top, labelled **needs you · 5m ago**. It never turns stale. The header counts it too.
@@ -110,11 +110,11 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 
 | Do this | To get this |
 | --- | --- |
-| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. Shaking through colours, with **?** or **!** and a number: a bot needs you (**?** is a question, **!** is an approval, the number is how many). **404** on the cube: the working bots have all gone quiet. A small black dot on the working cube: one of them has gone quiet |
+| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. **?** on the cube: a bot needs you. **404** on the cube: the working bots have all gone quiet. A small black dot on the working cube: one of them has gone quiet |
 | Click the cube | Open or close the panel |
 | Click a bot's row | Open that bot's chat, if it sent a link |
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
-| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set **Shake**, **Banner**, **Voice** and the reminder for a bot that needs you, set a **Read token**, set **Icon colour**, set **Appearance** to System, Light or Dark, or open **About** and check for updates |
+| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login**, **Alert when a bot fails**, or **Sound alert when a bot needs you** on or off, set the sound-only reminder, set a **Read token**, set **Icon colour**, set **Appearance** to System, Light or Dark, or open **About** and check for updates |
 | Click **No feed yet? Set one up** | Open these setup steps |
 | Click **Send a test post** | Post one working line for a bot named Test, then set it idle and remove it, so you can see the panel light up without leaving a Test card on the feed |
 | Click **Deploy to Cloudflare** | Open the one-click deploy page for the feed. That page first copies the code into your own GitHub or GitLab account |
@@ -123,7 +123,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | **last update 36m ago** on an orange card | You cleared its warning. It is still working, as far as the feed knows |
 | Click **Quit**, or press `⌘Q` | Close the app |
 
-**Icon colour** (Settings) sets the colour of the working cube, the **404** cube, and the needs-you cube when that cube is sitting still. While a bot is waiting and Shake is on, the needs-you cube cycles through the preset colours instead. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404**, the **?** and the **!**, and the eyes, are drawn dark or white, whichever reads better on the fill. There is no outline.
+**Icon colour** (Settings) sets the colour of the working cube, the **404** cube and the **?** cube. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404** and **?** marks, and the eyes, are drawn dark or white, whichever reads better on your colour. There is no outline.
 
 **About** (the bottom of Settings) shows **Chief Status** and the version from the app. **Check for updates** asks GitHub, when you click it, whether a newer release exists. It says **You're up to date**, or **Version X is available** with **Download** (opens the release page) and `brew upgrade --cask chief-status`. It does not download the app, and it does not check in the background. Offline, it says it couldn't check. `ChiefStatus --render-preview docs` writes that section as `about-light.png` and `about-dark.png`.
 
@@ -145,24 +145,17 @@ How to read the panel:
 | A plain row | The bot is idle |
 | The face colour | Just which bot it is. The colour never means status |
 
-While a bot is working, the cube bobs, and every few seconds does a little move: a twirl, a hop, a wiggle, a look around, or a blink. When everything is idle it only blinks now and then. When a bot fails it shakes once, then stays red. While a bot needs you, and nothing has failed, the cube shakes in short bursts and cycles colour until that wait ends. See [When a bot needs you](#when-a-bot-needs-you).
+While a bot is working, the cube bobs, and every few seconds does a little move: a twirl, a hop, a wiggle, a look around, or a blink. When everything is idle it only blinks now and then. When a bot fails it shakes once, then stays red. A bot that needs you shows the still **?** cube, after red. See [When a bot needs you](#when-a-bot-needs-you).
 
 ## When a bot needs you
 
-A bot that posts `needs_input` already gets the indigo card at the top of the panel. From this version the menu bar calls you over as well, and keeps calling until that bot posts a different state.
+A bot that posts `needs_input` gets the indigo card at the top of the panel, and the menu bar cube shows a still **?**. Red still wins if another bot has failed.
 
-- **A banner and a spoken line** the moment the wait starts. The title is "<Bot> needs your approval" when the post includes `"approval": true`, and "<Bot> needs you" otherwise. The banner's body is the task line, so that line has to say exactly what is needed: the question, or the thing to approve.
-- **A reminder** on a timer. The default is every 5 minutes. Settings can set 2, 10 or 15 minutes, or Off. Several bots waiting at once share one banner and one spoken line.
-- **The cube shakes** and its fill moves smoothly through orange, red, pink, purple, blue, teal and green. It carries a big **?** (a question) or **!** (an approval) and a count of how many bots are waiting. An approval shakes a little harder, and its count badge is red with a white number. A question's badge is solid dark or solid white, whichever reads on the menu bar. There is no outline. A waiting bot takes the cube even if another bot has failed. The failure still shows in the panel, and the failure alert still speaks if you turned that on. When nobody is waiting, a failure turns the cube red as before.
-- **A still cube** when Shake is off, or when macOS Reduce Motion is on. Same mark, same count, in your icon colour.
-- **Click the banner** and that bot's chat opens, the same way clicking its row does. The link is the one the bot sent, or the one in `links.json` on this Mac. A reminder that groups several bots opens the panel.
-- **Settings → When a bot needs you.** Shake, Banner and Voice are on, and the reminder is 5 minutes, until you change them. If macOS has refused banners, Settings says so. Voice still speaks when Voice is on. The app asks for notification permission the first time it runs.
+**Sound alert when a bot needs you** is on. The moment a bot starts waiting, the Mac speaks "<Bot> needs you", or "<Bot> needs your approval" when the post sets `approval`. It uses the same voice as the failure alert, and it speaks once for that change. The task line should still say exactly what is needed, because that is what you read on the card.
 
-<p align="center">
-  <img src="docs/needs-you-frames-light.png" width="520" alt="Needs-you menu bar frames on a light bar: question-mark cubes with a count, exclamation-mark cubes with a red count, and the still fallback in the icon colour">
-</p>
+**Remind every** is Off. Set it to 2, 5, 10 or 15 minutes and, while the sound alert is on, the Mac repeats the spoken line until that bot posts a different state. Several waiting bots share one spoken line.
 
-That picture is what `ChiefStatus --render-preview docs` writes as `needs-you-frames-light.png`. The same command also writes the dark menu bar (`needs-you-frames-dark.png`) and the new Settings section (`needs-you-settings-light.png` and `needs-you-settings-dark.png`). The file in this repo is a stand-in of those frames until the preview is rendered on a Mac.
+Switch the sound alert off and nothing is spoken.
 
 ## Set up the feed
 
@@ -445,7 +438,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether failure alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file. Needs-you alerts are not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouShake`, `needsYouBanner`, `needsYouVoice` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The four needs-you keys are the only new values stored on this Mac: shake, banner and voice default to on, and the reminder defaults to 5 minutes. Nothing else new is saved. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
+The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you sound settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouSound` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The two sound keys are the only new values stored on this Mac: the sound alert defaults to on, and the reminder defaults to off. Nothing else new is saved. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
 
 What is stored in your feed, on your own Cloudflare account:
 

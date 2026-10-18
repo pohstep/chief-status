@@ -4,12 +4,12 @@ Paste the body below into the GitHub release. Fill in the SHA-256 when `./packag
 
 ---
 
-**Chief Status 1.5.0**: a bot that needs you calls you over, and the menu bar cube shakes until you answer.
+**Chief Status 1.5.0**: a bot that needs you is spoken once, and the menu bar cube stays the still **?**.
 
 What's new:
 
-- **Needs-you alerts.** When a bot posts `needs_input`, you get a banner and a spoken line. The title is "<Bot> needs your approval" when the post sets `approval`, and "<Bot> needs you" otherwise. The body is the task line, so that line has to say exactly what is needed. A reminder repeats until the bot posts a different state. Click the banner to open that bot's chat.
-- **The menu bar cube shakes and changes colour** while anyone is waiting, with a **?** or an **!** and a count. Shake, Banner and Voice are on by default. Reduce Motion, or switching Shake off, shows a still cube in your icon colour.
+- **A sound when a bot needs you.** When a bot posts `needs_input`, the Mac speaks "<Bot> needs your approval" or "<Bot> needs you", once, if **Sound alert when a bot needs you** is on. That switch is on by default. A sound-only reminder is off until you set 2, 5, 10 or 15 minutes.
+- **The menu bar cube is unchanged.** A bot that needs you still shows the still **?** cube. Red still wins when a bot has failed.
 - **Send a test post** lights the panel, then removes the Test bot so it does not stay on the feed.
 - **A locked feed can be set up from the link.** `chiefstatus://setup?feed=…&password=…&token=…` saves the read token. You can also add `READ_TOKEN` in the Cloudflare dashboard, with no Terminal.
 - **About → Check for updates** compares this app with the latest GitHub release when you click it.

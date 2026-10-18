@@ -230,13 +230,10 @@ final class StatusModel: ObservableObject {
     @Published var updateNote = ""
     @Published var updateAvailable = false
     @Published var updatePage: URL?
-    /// Needs-you alerts. On by default. Stored in UserDefaults, not config.plist.
-    @Published var needsYouShake = true
-    @Published var needsYouBanner = true
-    @Published var needsYouVoice = true
-    @Published var needsYouReminderMinutes = 5
-    /// True when macOS has refused notification banners. The app stays quiet and Settings says so.
-    @Published var needsYouBannerDenied = false
+    /// Spoken line when a bot starts waiting. On by default. Stored in UserDefaults, not config.plist.
+    @Published var needsYouSound = true
+    /// Sound-only repeat. Off until the user picks 2, 5, 10 or 15 minutes.
+    @Published var needsYouReminderMinutes = 0
 
     /// What the feed sent. `bots` is this plus local links and local Clear.
     private var feedBots: [Bot] = []
@@ -255,7 +252,6 @@ final class StatusModel: ObservableObject {
     private var panelOpen = false
     private var consecutiveNetworkErrors = 0
     private var knownStatus: [String: String] = [:]
-    private var knownApproval: [String: Bool] = [:]
     private var hasBaseline = false
     private var reminderTimer: Timer?
     private let userAgent = "ChiefStatus/1.5.0"
@@ -298,12 +294,9 @@ final class StatusModel: ObservableObject {
         iconColor = IconColorSetting.load()
         readToken = ReadTokenStore.read()
         openAtLogin = LoginItem.isEnabled()
-        needsYouShake = NeedsYouSettings.storedBool(NeedsYouSettings.shakeKey, fallback: true)
-        needsYouBanner = NeedsYouSettings.storedBool(NeedsYouSettings.bannerKey, fallback: true)
-        needsYouVoice = NeedsYouSettings.storedBool(NeedsYouSettings.voiceKey, fallback: true)
+        needsYouSound = NeedsYouSettings.storedBool(NeedsYouSettings.soundKey, fallback: true)
         needsYouReminderMinutes = NeedsYouSettings.storedReminder()
         links = ConfigStore.readLinks()
-        prepareNeedsYouAlerts()
         refresh()
         connectLive()
         reschedulePoll()
@@ -663,58 +656,26 @@ final class StatusModel: ObservableObject {
         notify()
     }
 
-    /// Saves the menu bar colour and redraws the cube on the next notify. No relaunch.
-    func setNeedsYouShake(_ on: Bool) {
-        needsYouShake = on
-        UserDefaults.standard.set(on, forKey: NeedsYouSettings.shakeKey)
-        notify()
-    }
-
-    func setNeedsYouBanner(_ on: Bool) {
-        needsYouBanner = on
-        UserDefaults.standard.set(on, forKey: NeedsYouSettings.bannerKey)
-        if on {
-            prepareNeedsYouAlerts()
+    func setNeedsYouSound(_ on: Bool) {
+        needsYouSound = on
+        UserDefaults.standard.set(on, forKey: NeedsYouSettings.soundKey)
+        if !on {
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+        } else {
+            armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" })
         }
         notify()
     }
 
-    func setNeedsYouVoice(_ on: Bool) {
-        needsYouVoice = on
-        UserDefaults.standard.set(on, forKey: NeedsYouSettings.voiceKey)
-        notify()
-    }
-
     func setNeedsYouReminder(_ minutes: Int) {
-        let next = NeedsYouSettings.reminderChoices.contains(minutes) ? minutes : 5
+        let next = NeedsYouSettings.reminderChoices.contains(minutes) ? minutes : 0
         needsYouReminderMinutes = next
         UserDefaults.standard.set(next, forKey: NeedsYouSettings.reminderKey)
         reminderTimer?.invalidate()
         reminderTimer = nil
         armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" })
         notify()
-    }
-
-    /// First run asks for banner permission the normal way. A refusal is stored as a hint, not an error.
-    func prepareNeedsYouAlerts() {
-        let wantsBanner = needsYouBanner
-        let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { [weak self] settings in
-            let status = settings.authorizationStatus
-            if wantsBanner && status == .notDetermined {
-                center.requestAuthorization(options: [.alert]) { granted, _ in
-                    DispatchQueue.main.async {
-                        self?.needsYouBannerDenied = !granted
-                        self?.notify()
-                    }
-                }
-                return
-            }
-            DispatchQueue.main.async {
-                self?.needsYouBannerDenied = status == .denied
-                self?.notify()
-            }
-        }
     }
 
     /// Opens the bot's chat. The feed link wins. links.json is the fallback. Returns false when there is no link.
@@ -880,40 +841,26 @@ final class StatusModel: ObservableObject {
                     AlertCenter.announceFailures(fresh)
                 }
             }
-            var entered: [Bot] = []
-            for bot in bots where bot.status == "needs_input" {
-                let wasWaiting = knownStatus[bot.bot] == "needs_input"
-                let sameKind = knownApproval[bot.bot] == bot.approval
-                if !wasWaiting || !sameKind {
-                    entered.append(bot)
+            if needsYouSound {
+                var entered: [Bot] = []
+                for bot in bots where bot.status == "needs_input" {
+                    if knownStatus[bot.bot] != "needs_input" {
+                        entered.append(bot)
+                    }
                 }
-            }
-            if !entered.isEmpty {
-                AlertCenter.announceNeedsYou(entered, voice: needsYouVoice, banner: needsYouBanner)
-            }
-            var left: [String] = []
-            for (name, status) in knownStatus where status == "needs_input" {
-                let stillWaiting = bots.contains { $0.bot == name && $0.status == "needs_input" }
-                if !stillWaiting {
-                    left.append(name)
+                if !entered.isEmpty {
+                    FailureSpeaker.shared.speak(entered.map { needsYouPhrase($0) })
                 }
-            }
-            if !left.isEmpty {
-                AlertCenter.clearNeedsYou(left)
-            }
-            if !bots.contains(where: { $0.status == "needs_input" }) {
-                AlertCenter.clearReminder()
             }
         }
         knownStatus = Dictionary(uniqueKeysWithValues: bots.map { ($0.bot, $0.status) })
-        knownApproval = Dictionary(uniqueKeysWithValues: bots.map { ($0.bot, $0.approval) })
         hasBaseline = true
         armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" })
     }
 
-    /// One grouped reminder while anyone is still waiting. Off, or nobody waiting, stops the timer.
+    /// Sound only. Off, the sound toggle off, or nobody waiting, stops the timer.
     private func armNeedsYouReminder(waiting: Bool) {
-        if !waiting || needsYouReminderMinutes <= 0 {
+        if !waiting || !needsYouSound || needsYouReminderMinutes <= 0 {
             reminderTimer?.invalidate()
             reminderTimer = nil
             return
@@ -935,6 +882,10 @@ final class StatusModel: ObservableObject {
     }
 
     private func fireNeedsYouReminder() {
+        if !needsYouSound {
+            armNeedsYouReminder(waiting: false)
+            return
+        }
         let waiting = bots
             .filter { $0.status == "needs_input" }
             .sorted { $0.bot.localizedCaseInsensitiveCompare($1.bot) == .orderedAscending }
@@ -942,7 +893,20 @@ final class StatusModel: ObservableObject {
             armNeedsYouReminder(waiting: false)
             return
         }
-        AlertCenter.announceReminder(waiting, voice: needsYouVoice, banner: needsYouBanner)
+        let line: String
+        if waiting.count == 1 {
+            line = needsYouPhrase(waiting[0])
+        } else {
+            line = waiting.map { needsYouPhrase($0) }.joined(separator: ". ")
+        }
+        FailureSpeaker.shared.speak([line])
+    }
+
+    private func needsYouPhrase(_ bot: Bot) -> String {
+        if bot.approval {
+            return "\(bot.bot) needs your approval"
+        }
+        return "\(bot.bot) needs you"
     }
 
     /// While the live socket is up, it carries updates. The 15s poll is only the fallback.
@@ -1119,89 +1083,6 @@ private enum AlertCenter {
         }
         content.sound = nil
         deliver(content, identifier: UUID().uuidString)
-    }
-
-    /// One banner per bot that just started waiting, and the same spoken line as a failure, through FailureSpeaker.
-    static func announceNeedsYou(_ bots: [Bot], voice: Bool, banner: Bool) {
-        if voice {
-            FailureSpeaker.shared.speak(bots.map { phrase(for: $0) })
-        }
-        if !banner { return }
-        for bot in bots {
-            let content = UNMutableNotificationContent()
-            content.title = phrase(for: bot)
-            content.body = taskBody(for: bot)
-            content.sound = nil
-            content.userInfo = ["bot": bot.bot]
-            deliver(content, identifier: "chiefstatus.needs-you.\(bot.bot)")
-        }
-    }
-
-    /// Several waiting bots share one banner and one spoken line.
-    static func announceReminder(_ bots: [Bot], voice: Bool, banner: Bool) {
-        if bots.isEmpty { return }
-        if voice {
-            let line: String
-            if bots.count == 1 {
-                line = phrase(for: bots[0])
-            } else {
-                line = bots.map { phrase(for: $0) }.joined(separator: ". ")
-            }
-            FailureSpeaker.shared.speak([line])
-        }
-        if !banner { return }
-        let content = UNMutableNotificationContent()
-        if bots.count == 1 {
-            content.title = phrase(for: bots[0])
-            content.body = taskBody(for: bots[0])
-            content.userInfo = ["bot": bots[0].bot]
-        } else {
-            let allApproval = !bots.contains { !$0.approval }
-            if allApproval {
-                content.title = "\(bots.count) bots need your approval"
-            } else {
-                content.title = "\(bots.count) bots need you"
-            }
-            content.body = bots.map { summaryLine(for: $0) }.joined(separator: "\n")
-            content.userInfo = ["bots": bots.map(\.bot).joined(separator: "\n")]
-        }
-        content.sound = nil
-        deliver(content, identifier: "chiefstatus.needs-you.reminder")
-    }
-
-    static func clearNeedsYou(_ names: [String]) {
-        if names.isEmpty { return }
-        let ids = names.map { "chiefstatus.needs-you.\($0)" }
-        let center = UNUserNotificationCenter.current()
-        center.removeDeliveredNotifications(withIdentifiers: ids)
-        center.removePendingNotificationRequests(withIdentifiers: ids)
-    }
-
-    static func clearReminder() {
-        let ids = ["chiefstatus.needs-you.reminder"]
-        let center = UNUserNotificationCenter.current()
-        center.removeDeliveredNotifications(withIdentifiers: ids)
-        center.removePendingNotificationRequests(withIdentifiers: ids)
-    }
-
-    static func phrase(for bot: Bot) -> String {
-        if bot.approval {
-            return "\(bot.bot) needs your approval"
-        }
-        return "\(bot.bot) needs you"
-    }
-
-    private static func taskBody(for bot: Bot) -> String {
-        let task = bot.task.trimmingCharacters(in: .whitespacesAndNewlines)
-        if task.isEmpty { return "Waiting on you" }
-        return task
-    }
-
-    private static func summaryLine(for bot: Bot) -> String {
-        let task = bot.task.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = phrase(for: bot)
-        if task.isEmpty { return title }
-        return "\(title): \(task)"
     }
 
     private static func deliver(_ content: UNMutableNotificationContent, identifier: String) {

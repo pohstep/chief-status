@@ -33,7 +33,7 @@ curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "
 Never put passwords or secrets in the task line.
 ```
 
-`started_at` is optional. On `working` and `needs_input`, leave it out and the feed uses the current time. On `done` or `failed`, leave it out. If that bot was working, the feed keeps the working start for the row and for today's log. Add `"url":"https://example.com/agent1"` when the row should open a chat. Leave `url` out and the previous link stays. Send `"url":""` to clear it. `"color"` works the same way. Add `"approval": true` only with `needs_input`, when you need an approval rather than an answer. Leave it out, or send `false`, and the menu bar treats it as a question. The task line must say exactly what is needed.
+`started_at` is optional. On `working` and `needs_input`, leave it out and the feed uses the current time. On `done` or `failed`, leave it out. If that bot was working, the feed keeps the working start for the row and for today's log. Add `"url":"https://example.com/agent1"` when the row should open a chat. Leave `url` out and the previous link stays. Send `"url":""` to clear it. `"color"` works the same way. Add `"approval": true` only with `needs_input`, when you need an approval rather than an answer. The panel card then says **approve**, and the spoken line is "<Bot> needs your approval". Leave it out, or send `false`, and both say the bot needs you. The menu bar cube is the same **?** either way. The task line must say exactly what is needed.
 
 ## If the bot has this repo
 
