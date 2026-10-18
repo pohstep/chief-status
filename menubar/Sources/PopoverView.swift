@@ -367,7 +367,7 @@ struct StatusPopoverView: View {
                 TextEditor(text: .constant(prompt))
                     .font(.system(size: 10, design: .monospaced))
                     .frame(height: 120)
-                if let link = SetupShare.link(feed: shareFeed, password: model.postPassword) {
+                if let link = SetupShare.link(feed: shareFeed, password: model.postPassword, readToken: model.readToken) {
                     Text("Setup link")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PanelTheme.ink)
@@ -375,7 +375,13 @@ struct StatusPopoverView: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(PanelTheme.ink2)
                         .textSelection(.enabled)
-                        .lineLimit(3)
+                        .lineLimit(4)
+                    if !model.readToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("This link includes the read token. Opening it on this Mac saves the token.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(PanelTheme.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(spacing: 8) {
                         Button("Copy prompt") { model.copyText(prompt) }
                             .buttonStyle(.bordered)
@@ -394,9 +400,9 @@ struct StatusPopoverView: View {
             Text(model.setupError ?? model.copyNote ?? model.testNote ?? " ")
                 .font(.system(size: 11))
                 .foregroundStyle(model.setupError == nil ? PanelTheme.ink2 : PanelTheme.redText)
-                .lineLimit(2)
+                .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 28, alignment: .top)
+                .frame(height: 40, alignment: .top)
             HStack(spacing: 8) {
                 Button("Save") { model.saveAddress() }
                     .buttonStyle(.borderedProminent)
@@ -452,6 +458,7 @@ struct StatusPopoverView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 iconColour
                 NeedsYouSettingsSection(model: model)
+                AboutSection(model: model)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1759,6 +1766,51 @@ private func durationLabel(ms: Int) -> String {
     return "\(hours)h \(extra)m"
 }
 
+private struct AboutSection: View {
+    @ObservedObject var model: StatusModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("About")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(PanelTheme.ink)
+            Text("Chief Status \(AppVersion.current)")
+                .font(.system(size: 12))
+                .foregroundStyle(PanelTheme.ink)
+            Button(model.checkingUpdate ? "Checking…" : "Check for updates") {
+                model.checkForUpdates()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(model.checkingUpdate)
+            updateResult
+        }
+        .padding(.top, 4)
+    }
+
+    private var updateResult: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !model.updateNote.isEmpty {
+                Text(model.updateNote)
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.updateAvailable {
+                if let page = model.updatePage {
+                    Button("Download") { NSWorkspace.shared.open(page) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+                Text("brew upgrade --cask chief-status")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 private struct NeedsYouSettingsSection: View {
     @ObservedObject var model: StatusModel
 
@@ -1818,8 +1870,8 @@ private struct NeedsYouSettingsSection: View {
 }
 
 /// `ChiefStatus --render-preview <folder>`: sample panels in light and dark, the 404 face at 28 and 20 pt,
-/// every menu bar cube, the icon colour presets, the needs-you alert frames, and the needs-you Settings section.
-/// Nothing is read from or sent to the feed.
+/// every menu bar cube, the icon colour presets, the needs-you alert frames, the needs-you Settings section,
+/// and the About section. Nothing is read from or sent to the feed.
 enum PreviewRenderer {
     static func run(folder: String) -> Int32 {
         let directory = URL(fileURLWithPath: (folder as NSString).expandingTildeInPath, isDirectory: true)
@@ -1893,6 +1945,9 @@ enum PreviewRenderer {
 
             let needsSettings = needsYouSettingsSheet(dark: dark)
             ok = write(needsSettings, size: NSSize(width: 680, height: 400), dark: dark, to: directory.appendingPathComponent("needs-you-settings-\(name).png")) && ok
+
+            let about = aboutSheet(dark: dark)
+            ok = write(about, size: NSSize(width: 680, height: 540), dark: dark, to: directory.appendingPathComponent("about-\(name).png")) && ok
         }
         print(ok ? "Wrote previews to \(directory.path)" : "Some previews failed")
         return ok ? 0 : 1
@@ -2043,6 +2098,44 @@ enum PreviewRenderer {
         .padding(12)
         .frame(width: 680, height: 400, alignment: .topLeading)
         .background(dark ? Color(red: 0.16, green: 0.16, blue: 0.18) : Color(red: 0.93, green: 0.93, blue: 0.95))
+    }
+
+    /// About, before a check, up to date, an available release, and the offline line. No network call.
+    private static func aboutSheet(dark: Bool) -> some View {
+        let ready = StatusModel()
+        let current = StatusModel()
+        current.updateNote = "You're up to date"
+        let newer = StatusModel()
+        newer.updateNote = "Version 1.6.0 is available"
+        newer.updateAvailable = true
+        newer.updatePage = URL(string: "https://github.com/pohstep/chief-status/releases/latest")
+        let offline = StatusModel()
+        offline.updateNote = "Couldn't check for updates. Try again when you're online."
+        let ink = dark ? Color.white : Color.black
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                aboutColumn(model: ready, caption: "Before you check", ink: ink)
+                aboutColumn(model: current, caption: "Up to date", ink: ink)
+            }
+            HStack(alignment: .top, spacing: 12) {
+                aboutColumn(model: newer, caption: "Update available", ink: ink)
+                aboutColumn(model: offline, caption: "Offline", ink: ink)
+            }
+        }
+        .padding(12)
+        .frame(width: 680, height: 540, alignment: .topLeading)
+        .background(dark ? Color(red: 0.16, green: 0.16, blue: 0.18) : Color(red: 0.93, green: 0.93, blue: 0.95))
+    }
+
+    private static func aboutColumn(model: StatusModel, caption: String, ink: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(caption)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ink)
+            AboutSection(model: model)
+        }
+        .padding(10)
+        .frame(width: 318, height: 248, alignment: .topLeading)
     }
 
     private static func settingsColumn(model: StatusModel, caption: String, ink: Color) -> some View {

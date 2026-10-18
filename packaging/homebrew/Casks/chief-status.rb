@@ -1,7 +1,7 @@
 cask "chief-status" do
   version "1.5.0"
 
-  # SHA-256 of Chief-Status-1.5.0.dmg. Nothing is released yet, so this stays a placeholder.
+  # SHA-256 of Chief-Status-1.5.0.dmg. Nothing is released yet, so this stays REPLACE_WITH_SHA256.
   sha256 "REPLACE_WITH_SHA256"
   url "https://github.com/pohstep/chief-status/releases/download/v#{version}/Chief-Status-#{version}.dmg"
 
@@ -13,6 +13,9 @@ cask "chief-status" do
 
   app "Chief Status.app"
 
+  # Quit the app first, then remove it.
+  uninstall quit: "com.chiefstatus.menubar"
+
   zap trash: [
     "~/Library/Application Support/Chief Status",
     "~/Library/Preferences/com.chiefstatus.menubar.plist",
@@ -20,9 +23,11 @@ cask "chief-status" do
 
   caveats <<~EOS
     Chief Status is not signed with an Apple developer account.
-    The first time macOS blocks it, allow it once:
+    The first time macOS blocks it, allow it once.
 
-      Open Anyway in System Settings → Privacy & Security
+    macOS 15 or newer: System Settings → Privacy & Security → Open Anyway.
+
+    macOS 13 or 14: in Applications, right-click Chief Status, choose Open, then Open again.
 
     Or, in Terminal:
 

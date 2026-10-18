@@ -115,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         revealPanel()
     }
 
-    /// chiefstatus://setup links. The URL is not logged: it carries the post password.
+    /// chiefstatus://setup links. The URL is not logged: it can carry the post password and the read token.
     @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
         guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue else { return }
         guard let url = URL(string: text) else { return }

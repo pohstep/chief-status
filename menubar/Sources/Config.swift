@@ -188,7 +188,48 @@ enum LoginItem {
     }
 }
 
-/// Feed address and post password carried by chiefstatus://setup and the bot prompt.
+/// Version shown in Settings. The running app reads CFBundleShortVersionString.
+/// A bare `ChiefStatus --render-preview` binary has no bundle, so that path uses 1.5.0.
+enum AppVersion {
+    static var current: String {
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return "1.5.0"
+    }
+
+    /// `v1.5.0` and `1.5.0` are the same version.
+    static func comparable(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("v") || text.hasPrefix("V") {
+            text.removeFirst()
+        }
+        return text
+    }
+
+    static func releasesPage() -> URL? {
+        return URL(string: "https://github.com/pohstep/chief-status/releases/latest")
+    }
+
+    /// The release page from GitHub, or the public latest-release page.
+    static func releasePage(_ raw: String?) -> URL? {
+        if let raw = raw {
+            if let url = URL(string: raw) {
+                if let scheme = url.scheme?.lowercased() {
+                    if scheme == "https" || scheme == "http" {
+                        return url
+                    }
+                }
+            }
+        }
+        return releasesPage()
+    }
+}
+
+/// Feed address, post password, and optional read token carried by chiefstatus://setup and the bot prompt.
 /// These strings are shown in Settings and copied to the clipboard. Do not log them.
 enum SetupShare {
     static let guide = "https://github.com/pohstep/chief-status#set-up-the-feed"
@@ -197,6 +238,8 @@ enum SetupShare {
     struct Link {
         var feed: String
         var password: String
+        /// Empty when the link has no read token. Opening the link then leaves a saved token alone.
+        var readToken: String
     }
 
     static func parse(_ url: URL) -> Link? {
@@ -206,6 +249,7 @@ enum SetupShare {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         var feed = ""
         var password = ""
+        var readToken = ""
         let items = components.queryItems ?? []
         for item in items {
             let value = item.value ?? ""
@@ -213,20 +257,27 @@ enum SetupShare {
                 feed = value
             } else if item.name == "password" {
                 password = value
+            } else if item.name == "token" {
+                readToken = value
             }
         }
-        return Link(feed: feed, password: password)
+        return Link(feed: feed, password: password, readToken: readToken)
     }
 
-    static func link(feed: String, password: String) -> String? {
+    static func link(feed: String, password: String, readToken: String = "") -> String? {
         guard let normalized = ConfigStore.normalize(feed), !password.isEmpty else { return nil }
-        var components = URLComponents()
-        components.scheme = "chiefstatus"
-        components.host = "setup"
-        components.queryItems = [
+        var items = [
             URLQueryItem(name: "feed", value: normalized),
             URLQueryItem(name: "password", value: password),
         ]
+        let token = readToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            items.append(URLQueryItem(name: "token", value: token))
+        }
+        var components = URLComponents()
+        components.scheme = "chiefstatus"
+        components.host = "setup"
+        components.queryItems = items
         return components.string
     }
 

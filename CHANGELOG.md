@@ -12,6 +12,10 @@ In plain words:
 - **If banners are refused,** the app stays quiet and Settings says so. Voice still speaks when Voice is on. Permission is asked the first time the app runs.
 - The feed accepts an optional `approval` boolean on a status post. It is stored and returned only as meaningful for `needs_input`. Older apps ignore it. `post-status.sh` takes `--approval` or `CHIEF_STATUS_APPROVAL=1`.
 - README, version and the Homebrew cask move to 1.5.0. The cask checksum is `REPLACE_WITH_SHA256` until the disk image is built. Nothing in 1.5.0 is released yet.
+- **Send a test post** removes the Test bot right after the post succeeds: it posts Test as idle, then `DELETE /status/Test`.
+- The Deploy to Cloudflare button is documented as copying the code into your own GitHub or GitLab account first. A read token can be added in the Cloudflare dashboard, and the setup link can carry it as `token`.
+- Install steps lead with **Open Anyway** on macOS 15. Right-click → Open is the macOS 13–14 note. The cask quits the app on uninstall, and `brew uninstall --zap` deletes `com.chiefstatus.menubar` preferences.
+- Settings → **About** shows the bundle version and **Check for updates**. It looks up the latest GitHub release only when you click, and it downloads nothing.
 
 Details:
 
@@ -22,7 +26,11 @@ Details:
 - Menu bar: a waiting bot takes the cube, ahead of a failure. While that state is showing, `FaceAnimator` draws about 30 frames a second and stops that timer otherwise. The fill eases through `#F39C28`, `#E94347`, `#E85FA8`, `#8762F3`, `#3A86F4`, `#3BB5B0`, `#5ABF78`. The mark ink follows the fill. The badge is a solid fill with no stroke. Approval badge `#E5484D`, white digit. A question badge is `#1A1410` with a white digit on a light menu bar, and white with a dark digit on a dark menu bar. When nobody is waiting, a failure is still the red cube.
 - Reduce Motion is `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`, and the app observes `NSWorkspace.accessibilityDisplayOptionsDidChangeNotification`. The still cube uses the icon colour from Settings.
 - Settings keys in `com.chiefstatus.menubar`: `needsYouShake`, `needsYouBanner`, `needsYouVoice`, `needsYouReminderMinutes`. Missing keys mean on, and 5 minutes. The panel card says **approve** when `approval` is true.
-- `--render-preview` also writes `needs-you-frames-light.png`, `needs-you-frames-dark.png`, `needs-you-settings-light.png` and `needs-you-settings-dark.png`.
+- `--render-preview` also writes `needs-you-frames-light.png`, `needs-you-frames-dark.png`, `needs-you-settings-light.png`, `needs-you-settings-dark.png`, `about-light.png` and `about-dark.png`.
+- **Send a test post** posts `{"bot":"Test","status":"working","task":"test post"}`, then the same bot as `idle`, then `DELETE /status/Test` with the post password. A delete that answers `200` or `404` counts as cleaned up. The password is still memory only.
+- Setup link: `chiefstatus://setup?feed=…&password=…&token=…`. `token` is optional. A non-empty value is saved to the existing `readToken` preference before the first read. An omitted token does not clear one already saved. The URL is not logged.
+- **Check for updates** calls `https://api.github.com/repos/pohstep/chief-status/releases/latest` from the button only. `tag_name` is compared with `CFBundleShortVersionString` after a leading `v` is stripped. A match says "You're up to date". Anything else says "Version X is available", with **Download** opening `html_url` and the hint `brew upgrade --cask chief-status`. A network or parse failure says to try again when online. Nothing from the check is stored.
+- Cask: `uninstall quit: "com.chiefstatus.menubar"`. `zap` already deletes `~/Library/Application Support/Chief Status` and `~/Library/Preferences/com.chiefstatus.menubar.plist`. The caveat leads with Open Anyway for macOS 15, and right-click → Open for macOS 13–14.
 - Version `1.5.0` (`CFBundleVersion` 6). User-Agent `ChiefStatus/1.5.0`. The cask URL follows the version. `sha256` is `REPLACE_WITH_SHA256`.
 
 ## v1.4.0 — 2026-10-19

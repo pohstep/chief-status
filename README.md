@@ -94,16 +94,16 @@ Apple charges $99 a year for a developer account that "signs" apps so macOS trus
 
 ### Remove it
 
-Click the cube, then **Quit**. Drag **Chief Status** from Applications to the Trash. To also remove your saved feed address, delete the folder `~/Library/Application Support/Chief Status/`.
+Click the cube, then **Quit**. Drag **Chief Status** from Applications to the Trash. To also remove your saved feed address, delete the folder `~/Library/Application Support/Chief Status/`. To remove the saved preferences (appearance, icon colour, read token, and the needs-you settings), run `defaults delete com.chiefstatus.menubar`. If you installed with Homebrew, `brew uninstall --zap --cask chief-status` quits the app and removes the app, the feed-address folder, and those preferences.
 
-If you installed with `./install.sh`, run `./uninstall.sh` instead. It also removes the start-at-login setting.
+If you installed with `./install.sh`, run `./uninstall.sh` instead. It also removes the start-at-login setting. The preferences stay until you run `defaults delete com.chiefstatus.menubar`.
 
 ## Requirements
 
 | | |
 | --- | --- |
 | Mac | macOS 13 Ventura or newer. Apple silicon or Intel, one download |
-| For the feed | A free [Cloudflare](https://dash.cloudflare.com/sign-up) account, and [Node.js](https://nodejs.org) 20 or newer on any computer, used once to set it up |
+| For the feed | A free [Cloudflare](https://dash.cloudflare.com/sign-up) account, plus a [GitHub](https://github.com) or [GitLab](https://gitlab.com) account. The Deploy to Cloudflare button first copies the feed into that account. The Terminal steps also need [Node.js](https://nodejs.org) 20 or newer, used once |
 | Only to build it yourself | Apple's Command Line Tools (`xcode-select --install`). The full Xcode app is not needed |
 
 ## Using it
@@ -114,16 +114,18 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | Click the cube | Open or close the panel |
 | Click a bot's row | Open that bot's chat, if it sent a link |
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
-| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set **Shake**, **Banner**, **Voice** and the reminder for a bot that needs you, set a **Read token**, set **Icon colour**, or set **Appearance** to System, Light or Dark |
+| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set **Shake**, **Banner**, **Voice** and the reminder for a bot that needs you, set a **Read token**, set **Icon colour**, set **Appearance** to System, Light or Dark, or open **About** and check for updates |
 | Click **No feed yet? Set one up** | Open these setup steps |
-| Click **Send a test post** | Post one working line for a bot named Test, so you can see the panel light up |
-| Click **Deploy to Cloudflare** | Open the one-click deploy page for the feed |
-| Click **Copy prompt** or **Copy link** | Copy the bot prompt, or a `chiefstatus://setup` link that fills in this Mac. Both include the post password. The app shows and copies them, and does not save or log the password |
+| Click **Send a test post** | Post one working line for a bot named Test, then set it idle and remove it, so you can see the panel light up without leaving a Test card on the feed |
+| Click **Deploy to Cloudflare** | Open the one-click deploy page for the feed. That page first copies the code into your own GitHub or GitLab account |
+| Click **Copy prompt** or **Copy link** | Copy the bot prompt, or a `chiefstatus://setup` link that fills in this Mac. Both include the post password. When a read token is filled in, the link also includes it, and opening the link saves it. The app shows and copies them, and does not log them |
 | Click **Check on it** or **Clear** on a black **maybe stale** card | Open its chat, or hide the warning on this Mac for 30 minutes (nothing is posted). The rest of a black card does nothing when clicked |
 | **last update 36m ago** on an orange card | You cleared its warning. It is still working, as far as the feed knows |
 | Click **Quit**, or press `⌘Q` | Close the app |
 
 **Icon colour** (Settings) sets the colour of the working cube, the **404** cube, and the needs-you cube when that cube is sitting still. While a bot is waiting and Shake is on, the needs-you cube cycles through the preset colours instead. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404**, the **?** and the **!**, and the eyes, are drawn dark or white, whichever reads better on the fill. There is no outline.
+
+**About** (the bottom of Settings) shows **Chief Status** and the version from the app. **Check for updates** asks GitHub, when you click it, whether a newer release exists. It says **You're up to date**, or **Version X is available** with **Download** (opens the release page) and `brew upgrade --cask chief-status`. It does not download the app, and it does not check in the background. Offline, it says it couldn't check. `ChiefStatus --render-preview docs` writes that section as `about-light.png` and `about-dark.png`.
 
 <p align="center">
   <img src="docs/panel.png" width="328" alt="The panel up close: a needs-you card at the top, a fresh working card, two black maybe-stale cards whose faces keep the bot's colour with 404 on them, and each row showing when that bot last posted">
@@ -166,13 +168,13 @@ That picture is what `ChiefStatus --render-preview docs` writes as `needs-you-fr
 
 The feed is a tiny program that runs for free on Cloudflare (it's called a "Worker"). Your bots send their status to it, and the app reads from it. You set it up once.
 
-You need a free Cloudflare account. The one-click button does not need Node.js. The Terminal steps do, and they need Node.js 20 or newer. If `npm install` is very slow where you are, run `npm config set registry https://registry.npmmirror.com` and try again.
+You need a free Cloudflare account and a GitHub or GitLab account. The Deploy to Cloudflare button first copies this code into your own GitHub or GitLab account, then Cloudflare deploys that copy. The button does not need Node.js. The Terminal steps do, and they need Node.js 20 or newer. If `npm install` is very slow where you are, run `npm config set registry https://registry.npmmirror.com` and try again.
 
 ### Deploy to Cloudflare
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/pohstep/chief-status/tree/main/worker)
 
-The same button is in the app: click the cube, then **Deploy to Cloudflare**.
+The button first copies the feed into your own GitHub or GitLab account, so you need one of those plus Cloudflare. The same button is in the app: click the cube, then **Deploy to Cloudflare**.
 
 Cloudflare copies the feed onto your account and asks you for two things:
 
@@ -219,7 +221,7 @@ After deploy, Cloudflare prints your feed's address, like `https://chief-status.
 
    It prints your feed's address, like `https://chief-status.<your-subdomain>.workers.dev`. Open it in a browser. You should see a short note that Chief Status is running.
 
-6. **Paste that address into the app** (click the cube → **Settings**), and paste the same password into **Post password**. Either the plain address or the same address ending in `/status` works. Then copy the bot prompt. Click **Send a test post** if you want to see a face light up before a real bot reports.
+6. **Paste that address into the app** (click the cube → **Settings**), and paste the same password into **Post password**. Either the plain address or the same address ending in `/status` works. Then copy the bot prompt. Click **Send a test post** if you want to see a face light up before a real bot reports. The app then sets that Test bot to idle and removes it, so it does not stay on the feed and later turn into a **404**.
 
 7. **Optional: lock the feed** so only your Mac can read it. See [Keep your feed private](#keep-your-feed-private). You can do this now or any time later.
 
@@ -244,13 +246,15 @@ To change the password later, run `npx wrangler secret put STATUS_TOKEN` again i
    openssl rand -hex 24
    ```
 
-2. **Give it to the feed.** In the `worker` folder, run this and paste the token when asked. From then on, reading the feed needs the token.
+2. **Give it to the feed.** In the Cloudflare dashboard go to **Workers & Pages → chief-status → Settings → Variables and Secrets → Add → Secret**, and name it `READ_TOKEN`. Paste the token. From then on, reading the feed needs it.
+
+   Or, in Terminal, from the `worker` folder, run this and paste the token when asked:
 
    ```bash
    npx wrangler secret put READ_TOKEN
    ```
 
-3. **Give the same token to the app.** Click the cube → **Settings**, paste it into **Read token (optional)**, and click **Save**. If the app says *"This feed is locked. Add its read token in Settings."*, the token is missing or doesn't match.
+3. **Give the same token to the app.** Click the cube → **Settings**, paste it into **Read token (optional)**, and click **Save**. Or put it on the setup link (`token=`, see below) and open that link, which saves it. If the app says *"This feed is locked. Add its read token in Settings."*, the token is missing or doesn't match.
 
 **Your bots don't change.** Posting still uses the `STATUS_TOKEN` password, exactly as before. The read token is only for reading.
 
@@ -298,7 +302,7 @@ That's it. **The first time a bot posts, it shows up in the panel by itself**, w
 
 A bot that has this repo on its computer can use `worker/scripts/post-status.sh` instead of `curl`. That version, plus colours and chat links, is in [docs/BOT-SETUP.md](docs/BOT-SETUP.md).
 
-Settings also shows a `chiefstatus://setup?feed=…` link. Opening it on this Mac fills in the feed address and the post password. The link and the prompt both carry the password. The app only shows or copies them. It does not save the password, and it does not write it to the log.
+Settings also shows a `chiefstatus://setup?feed=…&password=…` link. Opening it on this Mac fills in the feed address and the post password. Add `&token=` with the read token when the feed is locked. The app then saves that token, so the first read works. Leave `token` off and a token already saved on this Mac stays as it is. The link and the prompt both carry the password, and the link carries the read token when one is filled in. The app only shows or copies them. It does not save the password, and it does not write the link to the log.
 
 ### Colours
 
@@ -441,7 +445,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether failure alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file. Needs-you alerts are not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouShake`, `needsYouBanner`, `needsYouVoice` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The four needs-you keys are the only new values stored on this Mac: shake, banner and voice default to on, and the reminder defaults to 5 minutes. Nothing else new is saved. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
+The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouShake`, `needsYouBanner`, `needsYouVoice` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The four needs-you keys are the only new values stored on this Mac: shake, banner and voice default to on, and the reminder defaults to 5 minutes. Nothing else new is saved. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
 
 What is stored in your feed, on your own Cloudflare account:
 
@@ -459,8 +463,8 @@ None of this is in the repository, and nothing personal is built into the app or
 
 Reading the feed is open unless you set a **read token**. Posting still uses the separate post password either way.
 
-1. In the `worker` folder, pick a second long password and run `npx wrangler secret put READ_TOKEN`. Or add a secret named `READ_TOKEN` in the Cloudflare dashboard under **Workers & Pages → your worker → Settings → Variables and Secrets**.
-2. In the app, click the cube → **Settings** → **Read token**, paste the same value, and click **Save** (or just close the panel). It is stored in the app's private preferences, not the Keychain, and it is sent on `GET /status` and on the live feed as `Authorization: Bearer <token>`.
+1. In the Cloudflare dashboard go to **Workers & Pages → chief-status → Settings → Variables and Secrets → Add → Secret**, named `READ_TOKEN`. Or, in the `worker` folder, run `npx wrangler secret put READ_TOKEN`. See [Keep your feed private](#keep-your-feed-private).
+2. In the app, click the cube → **Settings** → **Read token**, paste the same value, and click **Save** (or just close the panel). A setup link with `&token=` does the same save. It is stored in the app's private preferences, not the Keychain, and it is sent on `GET /status` and on the live feed as `Authorization: Bearer <token>`.
 3. Without that header, `GET /status` and the live feed answer `401` with an empty body. The live feed also accepts `?token=<read token>` for tools that cannot set a header. `GET /status` does not. `POST` is unchanged: bots still send the post password, not the read token.
 
 Leave `READ_TOKEN` unset and nothing about reading changes. To try it on your own computer before you deploy:
@@ -482,11 +486,13 @@ brew install --cask chief-status
 
 The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.5.0.dmg`. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`. v1.5.0 is not released yet, so that recipe's `sha256` is `REPLACE_WITH_SHA256` until the disk image exists.
 
-The cask installs **Chief Status** into `/Applications`. The app is unsigned. The first time macOS blocks it, use **Open Anyway** in **System Settings → Privacy & Security**, or:
+The cask installs **Chief Status** into `/Applications` and quits the app before an uninstall. The app is unsigned. The first time macOS blocks it:
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/Chief Status.app"
-```
+- **macOS 15 or newer:** **System Settings → Privacy & Security → Open Anyway**.
+- **macOS 13 or 14:** in Applications, right-click **Chief Status**, choose **Open**, then **Open** again.
+- **Or, in Terminal:** `xattr -dr com.apple.quarantine "/Applications/Chief Status.app"`
+
+`brew uninstall --cask chief-status` quits the app first. `brew uninstall --zap --cask chief-status` also deletes `~/Library/Preferences/com.chiefstatus.menubar.plist` and the feed-address folder.
 
 ## Build it yourself
 
@@ -516,7 +522,7 @@ worker/     the feed: a Cloudflare Worker with one SQLite Durable Object (Status
 worker/scripts/post-status.sh   optional reporting script for bots that have this repo (plain sh + curl)
 worker/scripts/set-tz.sh        writes your time zone into wrangler.toml
 docs/       BOT-SETUP.md, images, and render-demo.py, which draws the README images
-packaging/  make-dmg.sh, and packaging/homebrew/Casks/chief-status.rb for the Homebrew tap
+packaging/  make-dmg.sh, packaging/release-notes.md for the GitHub release text, and packaging/homebrew/Casks/chief-status.rb for the Homebrew tap
 ```
 
 Feed settings live in `worker/wrangler.toml` under `[vars]`. The password is a secret, set with Wrangler:

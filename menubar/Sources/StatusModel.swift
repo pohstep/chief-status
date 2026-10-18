@@ -146,6 +146,16 @@ struct FeedResponse: Decodable {
     }
 }
 
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+    }
+}
+
 private struct LiveMessage: Decodable {
     let type: String?
     let bots: [Bot]?
@@ -214,6 +224,11 @@ final class StatusModel: ObservableObject {
     @Published var copyNote: String?
     @Published var testNote: String?
     @Published var sendingTest = false
+    /// Check for updates runs only when Settings asks. Nothing here is saved.
+    @Published var checkingUpdate = false
+    @Published var updateNote = ""
+    @Published var updateAvailable = false
+    @Published var updatePage: URL?
     /// Needs-you alerts. On by default. Stored in UserDefaults, not config.plist.
     @Published var needsYouShake = true
     @Published var needsYouBanner = true
@@ -376,12 +391,17 @@ final class StatusModel: ObservableObject {
         notify()
     }
 
-    /// Fills the feed address and the in-memory post password from a setup link.
-    /// The URL is not logged.
+    /// Fills the feed address, the in-memory post password, and the saved read token from a setup link.
+    /// The URL is not logged. An empty token leaves a token already saved on this Mac alone.
     func applySetupURL(_ url: URL) {
         guard let parsed = SetupShare.parse(url) else { return }
         if !parsed.password.isEmpty {
             postPassword = parsed.password
+        }
+        let token = parsed.readToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            readToken = token
+            commitReadToken(reconnect: false)
         }
         editingAddress = true
         if let normalized = ConfigStore.normalize(parsed.feed) {
@@ -432,49 +452,186 @@ final class StatusModel: ObservableObject {
             notify()
             return
         }
-        let payload = ["bot": "Test", "status": "working", "task": "test post"]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
         ConfigStore.write(feedURL: normalized)
         feedURL = normalized
         draftURL = normalized
         sendingTest = true
         setupError = nil
+        copyNote = nil
         testNote = "Sending…"
         notify()
 
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("Bearer \(postPassword)", forHTTPHeaderField: "Authorization")
-        request.httpBody = body
-        let task = session.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
+        let working = ["bot": "Test", "status": "working", "task": "test post"]
+        postJSON(url: url, payload: working) { [weak self] status in
+            guard let self = self else { return }
+            if status == 200 {
+                self.setupError = nil
+                self.editingAddress = false
+                self.testNote = "Removing the test…"
+                self.notify()
+                self.refresh()
+                self.connectLive()
+                self.finishTestPost(at: url)
+            } else {
                 self.sendingTest = false
                 self.testNote = nil
-                if error != nil || response == nil {
-                    self.editingAddress = true
+                self.editingAddress = true
+                if status == 0 {
                     self.setupError = "Couldn't reach the feed."
-                    self.notify()
+                } else if status == 401 {
+                    self.setupError = "The post password was refused."
+                } else {
+                    self.setupError = "The feed didn't accept the test post."
+                }
+                self.notify()
+            }
+        }
+    }
+
+    /// The working test already landed. Post Test as idle, then DELETE /status/Test, so it cannot sit there and turn into a 404.
+    private func finishTestPost(at url: URL) {
+        let idle = ["bot": "Test", "status": "idle", "task": ""]
+        postJSON(url: url, payload: idle) { [weak self] _ in
+            guard let self = self else { return }
+            self.removeTestBot(feed: url) { removed in
+                self.sendingTest = false
+                if removed {
+                    self.setupError = nil
+                    self.editingAddress = false
+                    self.testNote = "Test post sent, then removed."
+                } else {
+                    self.editingAddress = true
+                    self.testNote = nil
+                    self.setupError = "Test is still on the feed. Run ./scripts/delete-bot.sh Test"
+                }
+                self.notify()
+                self.refresh()
+                self.connectLive()
+            }
+        }
+    }
+
+    func checkForUpdates() {
+        if checkingUpdate { return }
+        checkingUpdate = true
+        updateNote = "Checking…"
+        updateAvailable = false
+        updatePage = nil
+        notify()
+        guard let endpoint = URL(string: "https://api.github.com/repos/pohstep/chief-status/releases/latest") else {
+            checkingUpdate = false
+            updateNote = "Couldn't check for updates. Try again when you're online."
+            notify()
+            return
+        }
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.checkingUpdate = false
+                self.applyUpdateCheck(data: data, response: response, error: error)
+            }
+        }
+        task.resume()
+    }
+
+    private func applyUpdateCheck(data: Data?, response: URLResponse?, error: Error?) {
+        let offline = "Couldn't check for updates. Try again when you're online."
+        if error != nil || data == nil {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let data = data else {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        guard let release = try? JSONDecoder().decode(GitHubRelease.self, from: data) else {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        let remote = AppVersion.comparable(release.tagName)
+        let local = AppVersion.comparable(AppVersion.current)
+        if remote.isEmpty {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        if remote == local {
+            updateNote = "You're up to date"
+            updateAvailable = false
+            updatePage = nil
+        } else {
+            updateNote = "Version \(remote) is available"
+            updateAvailable = true
+            updatePage = AppVersion.releasePage(release.htmlURL)
+        }
+        notify()
+    }
+
+    private func postJSON(url: URL, payload: [String: String], done: @escaping (Int) -> Void) {
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
+            done(0)
+            return
+        }
+        send(authedRequest(url: url, method: "POST", body: body), done: done)
+    }
+
+    private func removeTestBot(feed: URL, done: @escaping (Bool) -> Void) {
+        guard var components = URLComponents(url: feed, resolvingAgainstBaseURL: false) else {
+            done(false)
+            return
+        }
+        var path = components.path
+        while path.hasSuffix("/") {
+            path.removeLast()
+        }
+        path += "/Test"
+        components.path = path
+        guard let target = components.url else {
+            done(false)
+            return
+        }
+        send(authedRequest(url: target, method: "DELETE", body: nil)) { status in
+            done(status == 200 || status == 404)
+        }
+    }
+
+    private func authedRequest(url: URL, method: String, body: Data?) -> URLRequest {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = method
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("Bearer \(postPassword)", forHTTPHeaderField: "Authorization")
+        if let body = body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        }
+        return request
+    }
+
+    /// Calls back on the main queue with the HTTP status, or 0 when the feed could not be reached.
+    private func send(_ request: URLRequest, done: @escaping (Int) -> Void) {
+        let task = session.dataTask(with: request) { _, response, error in
+            DispatchQueue.main.async {
+                if error != nil || response == nil {
+                    done(0)
                     return
                 }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                if status == 200 {
-                    self.setupError = nil
-                    self.editingAddress = false
-                    self.notify()
-                    self.refresh()
-                    self.connectLive()
-                } else if status == 401 {
-                    self.editingAddress = true
-                    self.setupError = "The post password was refused."
-                    self.notify()
-                } else {
-                    self.editingAddress = true
-                    self.setupError = "The feed didn't accept the test post."
-                    self.notify()
-                }
+                done(status)
             }
         }
         task.resume()

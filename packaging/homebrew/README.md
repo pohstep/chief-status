@@ -15,10 +15,12 @@ brew install --cask chief-status
 
 `brew tap pohstep/tap` reads `github.com/pohstep/homebrew-tap`. The cask puts **Chief Status** in `/Applications`. It does not build with `swiftc`.
 
-The app is unsigned. The cask's caveat says how to allow it: **Open Anyway** in **System Settings → Privacy & Security**, or:
+The app is unsigned. The cask's caveat leads with the macOS 15 step: **System Settings → Privacy & Security → Open Anyway**. On macOS 13 or 14, right-click the app in Applications, choose **Open**, then **Open** again. Or:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Chief Status.app"
 ```
+
+`brew uninstall --cask chief-status` quits the app first. `brew uninstall --zap` also deletes `~/Library/Preferences/com.chiefstatus.menubar.plist`.
 
 `./install.sh` in a checkout of this repo still builds and installs into `~/Applications`, with or without Homebrew.
