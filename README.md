@@ -344,6 +344,14 @@ The status can be `working`, `done`, `failed`, `idle` or `needs_input`. `needs_i
 ./scripts/post-status.sh Agent1 needs_input "approve the homepage copy" --approval
 ```
 
+A long job can stay fresh without moving its start time. From the `worker` folder:
+
+```bash
+./scripts/heartbeat.sh Agent1 "the task"
+```
+
+That posts `working` with the same task immediately, then every 3 minutes, and writes its process id to a file. `./scripts/heartbeat.sh stop Agent1` stops it. Posting `done`, `failed`, or `idle` with `post-status.sh` stops it too. A heartbeat refreshes the last post and does not move `started_at`.
+
 ### Remove a bot
 
 A test bot, or one you retired, stays on the feed until you remove it. From the `worker` folder, with the same two settings as above:
@@ -399,6 +407,8 @@ Quick test that everything works end to end: post a `working` line by hand for a
 
 A black card with a **404** face and **maybe stale · 34m** means that bot said `working` and then posted nothing for 30 minutes. The 30 minutes are since the last post, not since the job started, so a long job that keeps posting stays orange. The time on an orange card is still how long the job has been running. It is a hint, not an error. Usually the bot moved on to a new job, or finished, without posting.
 
+A last post older than **No update after** in Settings (10 minutes unless you change it) shows **no update in N min** on that working or idle bot, in place of the working or idle line. There is no sound, no banner, and no animation. The 30-minute black card is unchanged.
+
 - **It is on a new job.** Ask it to post the new task. The card goes back to its colour at once and the timer restarts:
 
   ```bash
@@ -440,7 +450,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether failure alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file. Needs-you alerts are not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you sound settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouSound` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The two sound keys are the only new values stored on this Mac: the sound alert defaults to off, and the reminder defaults to off. Nothing else new is saved. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link. Switching the feed address clears the app's memory of which bots were already waiting or had just failed, so the new feed does not speak for bots that were already in that state.
+The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you sound settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouSound`, `needsYouReminderMinutes` and `quietAfterMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The sound alert defaults to off, and the reminder defaults to off. `quietAfterMinutes` is 5, 10, 15, 30 or 60, and a missing value means 10. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link. Switching the feed address clears the app's memory of which bots were already waiting or had just failed, so the new feed does not speak for bots that were already in that state.
 
 What is stored in your feed, on your own Cloudflare account:
 

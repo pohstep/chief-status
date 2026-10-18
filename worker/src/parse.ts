@@ -25,6 +25,11 @@ export type IncomingPost = {
 	 * Any other status stores false. Omitted means false.
 	 */
 	approval: boolean;
+	/**
+	 * A working heartbeat. The feed refreshes last_posted_at and keeps the stored started_at.
+	 * Omitted means false. Only valid with status working.
+	 */
+	heartbeat: boolean;
 };
 
 export function isStatus(value: string): value is Status {
@@ -84,8 +89,21 @@ export function parsePost(
 		return { ok: false, error: "task must be text, 200 characters or fewer" };
 	}
 
+	// A heartbeat is a working post that must not move the job clock.
+	// Any started_at on that post is ignored, including one the feed would otherwise reject.
+	let heartbeat = false;
+	if ("heartbeat" in body && body.heartbeat !== null && body.heartbeat !== undefined) {
+		if (typeof body.heartbeat !== "boolean") {
+			return { ok: false, error: "heartbeat must be true or false" };
+		}
+		if (body.heartbeat && body.status !== "working") {
+			return { ok: false, error: "heartbeat is only for a working post" };
+		}
+		heartbeat = body.heartbeat;
+	}
+
 	let started: string | null = null;
-	if ("started_at" in body && body.started_at !== null && body.started_at !== "") {
+	if (!heartbeat && "started_at" in body && body.started_at !== null && body.started_at !== "") {
 		const parsed = parseStartedAt(body.started_at);
 		if (!parsed) {
 			return {
@@ -141,7 +159,7 @@ export function parsePost(
 
 	return {
 		ok: true,
-		post: { bot, status: body.status, task, started_at: started, url, color, approval },
+		post: { bot, status: body.status, task, started_at: started, url, color, approval, heartbeat },
 	};
 }
 

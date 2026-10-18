@@ -168,7 +168,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func currentBarState() -> BarState {
-        BarState.from(bots: model.bots, now: Date(), staleAfterMinutes: model.staleAfterMinutes)
+        BarState.from(
+            bots: model.bots,
+            now: Date(),
+            staleAfterMinutes: model.staleAfterMinutes,
+            quietAfterMinutes: model.quietAfterMinutes
+        )
     }
 
     private func applyBar(_ state: BarState) {

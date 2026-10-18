@@ -12,6 +12,8 @@
 # The feed records last_posted_at itself, and the 404 uses that, so a long job
 # that keeps posting does not go black. done, failed and idle let the feed keep
 # the job clock, which is what today's durations are based on.
+# Those three also stop heartbeat.sh for this bot, so a later beat cannot
+# overwrite the finish. A heartbeat itself is heartbeat.sh, not this script.
 #
 # STATUS is one of: idle, working, failed, done, needs_input
 #   needs_input means the bot is waiting on you.
@@ -120,6 +122,12 @@ BODY=$(printf '{"bot":"%s","status":"%s","task":"%s"%s%s%s%s}' \
 	"$url_field" \
 	"$color_field" \
 	"$approval_field")
+
+case "$STATUS" in
+done | failed | idle)
+	"$(dirname "$0")/heartbeat.sh" stop "$BOT" >/dev/null 2>&1 || true
+	;;
+esac
 
 tmp=$(mktemp)
 code=$(curl -sS -o "$tmp" -w "%{http_code}" -X POST "$URL" \

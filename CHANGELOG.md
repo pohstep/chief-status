@@ -15,6 +15,8 @@ In plain words:
 - The Deploy to Cloudflare button is documented as copying the code into your own GitHub or GitLab account first. A read token can be added in the Cloudflare dashboard, and the setup link can carry it as `token`.
 - Install steps lead with **Open Anyway** on macOS 15. Right-click → Open is the macOS 13–14 note. The cask quits the app on uninstall, and `brew uninstall --zap` deletes `com.chiefstatus.menubar` preferences.
 - Settings → **About** shows the bundle version and **Check for updates**. It looks up the latest GitHub release only when you click, and it downloads nothing.
+- **A quiet label when a bot stops posting.** If the last post (`last_posted_at`, or `started_at` when that is missing) is older than **No update after** in Settings (10 minutes unless you pick 5, 15, 30 or 60), a working or idle bot shows **no update in N min**. No sound, no banner, and no animation. The 30-minute black **404** card is unchanged.
+- **A heartbeat for a long job.** `worker/scripts/heartbeat.sh` posts `working` with the same task every 3 minutes and writes its process id to a file. A heartbeat updates `last_posted_at` and leaves `started_at` alone. `heartbeat.sh stop`, or a `done`, `failed`, or `idle` post from `post-status.sh`, stops it. The script does not print the token.
 
 Details:
 
@@ -33,6 +35,7 @@ Details:
 - Setup link: `chiefstatus://setup?feed=…&password=…&token=…`. `token` is optional. A non-empty value is saved to the existing `readToken` preference before the first read. An omitted token does not clear one already saved. The URL is not logged.
 - **Check for updates** calls `https://api.github.com/repos/pohstep/chief-status/releases/latest` from the button only. `tag_name` is compared with `CFBundleShortVersionString` after a leading `v` is stripped. A match says "You're up to date". Anything else says "Version X is available", with **Download** opening `html_url` and the hint `brew upgrade --cask chief-status`. A network or parse failure says to try again when online. Nothing from the check is stored.
 - Cask: `uninstall quit: "com.chiefstatus.menubar"`. `zap` already deletes `~/Library/Application Support/Chief Status` and `~/Library/Preferences/com.chiefstatus.menubar.plist`. The caveat leads with Open Anyway for macOS 15, and right-click → Open for macOS 13–14.
+- A `working` post with `"heartbeat": true` keeps the stored `started_at`, or sets it to now when the bot is new, and ignores `started_at` on that post. `last_posted_at` still updates. A heartbeat on any other status, or a non-boolean `heartbeat`, is `400`. `heartbeat.sh` posts that body in the background. Settings key `quietAfterMinutes` (missing means 10) is what the panel uses for the quiet label.
 - Version `1.5.0` (`CFBundleVersion` 6). User-Agent `ChiefStatus/1.5.0`. The cask URL follows the version. `sha256` is `REPLACE_WITH_SHA256`.
 
 ## v1.4.0 — 2026-10-19

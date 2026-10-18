@@ -900,11 +900,154 @@ async function main() {
 		});
 		assert(tooFar.status === 400, `started_at more than 2 minutes ahead should be 400, was ${tooFar.status}`);
 
+		const beatStart = await postStatus({
+			bot: "BeatBot",
+			status: "working",
+			task: "draft",
+			started_at: "2020-01-01T00:00:00Z",
+			color: "#3B82F6",
+		});
+		assert(beatStart.status === 200, `beat start ${beatStart.status} ${JSON.stringify(beatStart.body)}`);
+		const beatPosted = Date.parse(beatStart.body.bot.last_posted_at);
+		const beatKept = await postStatus({
+			bot: "BeatBot",
+			status: "working",
+			task: "still draft",
+			heartbeat: true,
+			started_at: "2030-01-01T00:00:00Z",
+		});
+		assert(beatKept.status === 200, `heartbeat ${beatKept.status} ${JSON.stringify(beatKept.body)}`);
+		assert(
+			beatKept.body.bot.started_at === "2020-01-01T00:00:00.000Z",
+			`heartbeat must keep started_at, was ${beatKept.body.bot.started_at}`,
+		);
+		assert(
+			Date.parse(beatKept.body.bot.last_posted_at) >= beatPosted,
+			"heartbeat must refresh last_posted_at",
+		);
+		assert(beatKept.body.bot.task === "still draft", "heartbeat updates the task");
+		assert(beatKept.body.bot.color === "#3b82f6", "heartbeat keeps the stored colour");
+		const heartNewAt = Date.now();
+		const heartNew = await postStatus({
+			bot: "HeartNew",
+			status: "working",
+			task: "first beat",
+			heartbeat: true,
+			started_at: "2020-01-01T00:00:00Z",
+		});
+		assert(heartNew.status === 200, `first heartbeat ${heartNew.status} ${JSON.stringify(heartNew.body)}`);
+		assert(
+			heartNew.body.bot.started_at !== "2020-01-01T00:00:00.000Z",
+			"a first heartbeat ignores the client started_at",
+		);
+		assert(
+			Math.abs(Date.parse(heartNew.body.bot.started_at) - heartNewAt) < 15000,
+			`a first heartbeat starts now, was ${heartNew.body.bot.started_at}`,
+		);
+		const beatIdle = await postStatus({ bot: "BeatBot", status: "idle", task: "", heartbeat: true });
+		assert(beatIdle.status === 400, `heartbeat on idle should be 400, was ${beatIdle.status}`);
+		assert(
+			String(beatIdle.body.error || "").toLowerCase().includes("heartbeat"),
+			`heartbeat error was ${JSON.stringify(beatIdle.body)}`,
+		);
+		const beatWord = await postStatus({ bot: "BeatBot", status: "working", task: "x", heartbeat: "yes" });
+		assert(beatWord.status === 400, `non-boolean heartbeat should be 400, was ${beatWord.status}`);
+		const beatStill = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot");
+		assert(beatStill.status === "working", "a rejected heartbeat must not change the row");
+		assert(beatStill.started_at === "2020-01-01T00:00:00.000Z", "a rejected heartbeat must not move started_at");
+
+		await runHeartbeatScript(base);
+
 		console.log("feed tests passed");
 	} finally {
 		await worker.stop();
 		if (previousDevVars === null) fs.rmSync(devVarsPath, { force: true });
 		else fs.writeFileSync(devVarsPath, previousDevVars);
+	}
+}
+
+function assertNoToken(result, label) {
+	const out = `${result.stdout || ""}\n${result.stderr || ""}`;
+	assert(!out.includes(token), `${label} printed the token`);
+}
+
+async function waitUntilDead(pid) {
+	for (let i = 0; i < 25; i += 1) {
+		try {
+			process.kill(pid, 0);
+		} catch (error) {
+			if (error.code === "ESRCH") return;
+			throw error;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 40));
+	}
+	throw new Error("heartbeat process still running");
+}
+
+async function runHeartbeatScript(base) {
+	const script = path.join(workerDir, "scripts", "heartbeat.sh");
+	const postScript = path.join(workerDir, "scripts", "post-status.sh");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chief-heartbeats-"));
+	const env = {
+		...process.env,
+		CHIEF_STATUS_URL: base,
+		CHIEF_STATUS_TOKEN: token,
+		CHIEF_STATUS_HEARTBEAT_DIR: dir,
+		CHIEF_STATUS_HEARTBEAT_SECONDS: "3600",
+	};
+	const pidFile = path.join(dir, "BeatBot.pid");
+	try {
+		const before = Date.parse(
+			(await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot").last_posted_at,
+		);
+		const launched = await exec(script, ["BeatBot", "draft"], { env, timeout: 15000 });
+		assertNoToken(launched, "heartbeat start");
+		let listed = null;
+		const deadline = Date.now() + 10000;
+		while (Date.now() < deadline) {
+			const snap = await request(`${base}/status`);
+			listed = snap.body.bots.find((bot) => bot.bot === "BeatBot");
+			if (listed && Date.parse(listed.last_posted_at) > before) break;
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		}
+		assert(listed && Date.parse(listed.last_posted_at) > before, "heartbeat.sh did not refresh last_posted_at");
+		assert(
+			listed.started_at === "2020-01-01T00:00:00.000Z",
+			`heartbeat.sh moved started_at to ${listed.started_at}`,
+		);
+		assert(listed.task === "draft", `heartbeat.sh task was ${listed.task}`);
+		assert(listed.color === "#3b82f6", "heartbeat.sh should keep the stored colour");
+		assert(fs.existsSync(pidFile), "heartbeat pid file missing");
+		const pid = Number(String(fs.readFileSync(pidFile, "utf8")).trim());
+		assert(Number.isInteger(pid) && pid > 0, "heartbeat pid file was not a pid");
+		process.kill(pid, 0);
+
+		const stopped = await exec(script, ["stop", "BeatBot"], { env, timeout: 10000 });
+		assertNoToken(stopped, "heartbeat stop");
+		assert(!fs.existsSync(pidFile), "heartbeat stop should remove the pid file");
+		await waitUntilDead(pid);
+		const missing = await exec(script, ["stop", "BeatBot"], { env, timeout: 10000 });
+		assertNoToken(missing, "heartbeat stop with no pid");
+
+		const again = await exec(script, ["BeatBot", "draft"], { env, timeout: 15000 });
+		assertNoToken(again, "heartbeat restart");
+		const pidDeadline = Date.now() + 5000;
+		while (!fs.existsSync(pidFile) && Date.now() < pidDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert(fs.existsSync(pidFile), "heartbeat pid file missing after restart");
+		const pid2 = Number(String(fs.readFileSync(pidFile, "utf8")).trim());
+		const idled = await exec(postScript, ["BeatBot", "idle", "paused"], { env, timeout: 15000 });
+		assertNoToken(idled, "post-status idle");
+		await waitUntilDead(pid2);
+		const afterIdle = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot");
+		assert(afterIdle.status === "idle", `post-status should leave BeatBot idle, was ${afterIdle.status}`);
+	} finally {
+		try {
+			await exec(script, ["stop", "BeatBot"], { env, timeout: 5000 });
+		} catch {
+			// already stopped
+		}
 	}
 }
 

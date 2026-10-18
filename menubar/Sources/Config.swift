@@ -568,6 +568,29 @@ enum NeedsYouSettings {
     }
 }
 
+/// How long since the last post before the panel says "no update" instead of working or idle.
+/// UserDefaults domain com.chiefstatus.menubar. A missing key means 10 minutes.
+enum QuietAfter {
+    static let key = "quietAfterMinutes"
+    static let choices = [5, 10, 15, 30, 60]
+    static let fallback = 10
+
+    static func stored() -> Int {
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return fallback
+        }
+        let value = UserDefaults.standard.integer(forKey: key)
+        if choices.contains(value) {
+            return value
+        }
+        return fallback
+    }
+
+    static func title(for minutes: Int) -> String {
+        return "\(minutes) min"
+    }
+}
+
 /// When a working bot starts to look stale. The worker's STALE_MINUTES (default 60) is the second step.
 enum StaleRule {
     /// No new post for this long turns a working card black with a 404 face and "maybe stale".

@@ -23,15 +23,19 @@ enum BarTone: Equatable {
 }
 
 /// What the menu bar cube shows, in priority order:
-/// any failed → red. Else any bot needs input → "?" cube. Else any working bot that posted in the last 30 min → working cube,
-/// plus a small black dot if another working bot is stale. Else any stale working bot → "404" cube.
+/// any failed → red. Else any bot needs input → "?" cube.
+/// Else any working bot that is neither quiet nor faded → working cube, plus a small black dot if another working bot is faded.
+/// Else any faded working bot → "404" cube.
+/// Else any quiet working bot → still orange cube, with no bob.
 /// The working, "?" and "404" cubes all use the icon colour from Settings (Default is today's orange).
-/// Else grey (idle or finished).
+/// Else grey (idle or finished). A quiet idle bot stays grey.
 struct BarState: Equatable {
     var tone: BarTone
     var staleDot: Bool = false
     var staleCount: Int = 0
     var needsCount: Int = 0
+    /// Orange cube, but still. A quiet working bot is not a fresh job and does not bob.
+    var still: Bool = false
 
     var toolTip: String {
         switch tone {
@@ -40,6 +44,9 @@ struct BarState: Equatable {
         case .indigo:
             return needsCount == 1 ? "Chief Status — a bot needs you" : "Chief Status — \(needsCount) bots need you"
         case .orange:
+            if still {
+                return "Chief Status — no update"
+            }
             if staleDot {
                 return "Chief Status — working · \(staleCount) maybe stale (no update for 30+ min)"
             }
@@ -53,7 +60,7 @@ struct BarState: Equatable {
         }
     }
 
-    static func from(bots: [Bot], now: Date, staleAfterMinutes: Int) -> BarState {
+    static func from(bots: [Bot], now: Date, staleAfterMinutes: Int, quietAfterMinutes: Int) -> BarState {
         if bots.contains(where: { $0.status == "failed" }) {
             return BarState(tone: .red)
         }
@@ -62,12 +69,21 @@ struct BarState: Equatable {
             return BarState(tone: .indigo, needsCount: needs)
         }
         let working = bots.filter { $0.status == "working" }
-        let stale = working.filter { $0.isFaded(now: now, staleAfterMinutes: staleAfterMinutes) }.count
-        if working.count > stale {
-            return BarState(tone: .orange, staleDot: stale > 0, staleCount: stale)
+        let stale = working.filter { $0.isFaded(now: now, staleAfterMinutes: staleAfterMinutes) }
+        let fresh = working.filter { bot in
+            if bot.isFaded(now: now, staleAfterMinutes: staleAfterMinutes) { return false }
+            if bot.isQuiet(now: now, afterMinutes: quietAfterMinutes) { return false }
+            return true
         }
-        if stale > 0 {
-            return BarState(tone: .black, staleCount: stale)
+        if !fresh.isEmpty {
+            return BarState(tone: .orange, staleDot: !stale.isEmpty, staleCount: stale.count)
+        }
+        if !stale.isEmpty {
+            return BarState(tone: .black, staleCount: stale.count)
+        }
+        let quiet = working.filter { $0.isQuiet(now: now, afterMinutes: quietAfterMinutes) }
+        if !quiet.isEmpty {
+            return BarState(tone: .orange, still: true)
         }
         return BarState(tone: .grey)
     }
@@ -100,6 +116,7 @@ final class FaceAnimator {
 
     private var tone: BarTone = .grey
     private var staleDot = false
+    private var still = false
     private var hasTone = false
     private var timer: Timer?
     private var clock: Clock = .stopped
@@ -125,7 +142,12 @@ final class FaceAnimator {
     }
 
     func setState(_ state: BarState) {
+        let stillChanged = still != state.still
         staleDot = state.staleDot
+        still = state.still
+        if stillChanged {
+            hasTone = false
+        }
         setTone(state.tone)
     }
 
@@ -147,6 +169,9 @@ final class FaceAnimator {
         shakeOn = false
         switch tone {
         case .orange:
+            if still {
+                break
+            }
             nextMoveAt = now + Double.random(in: 6 ... 12)
         case .grey:
             nextBlinkAt = now + Double.random(in: 8 ... 15)
@@ -166,6 +191,10 @@ final class FaceAnimator {
     }
 
     private func advance(now: TimeInterval) {
+        if still && tone == .orange {
+            move = nil
+            return
+        }
         switch tone {
         case .orange:
             if move != nil, now >= moveStart + moveDuration {
@@ -212,6 +241,10 @@ final class FaceAnimator {
     }
 
     private func render(now: TimeInterval) {
+        if still && tone == .orange {
+            onImage?(StatusIcon.image(tone: tone, pose: IconPose(), staleDot: staleDot))
+            return
+        }
         let pose = FaceMotion.pose(
             tone: tone,
             time: now,
@@ -232,6 +265,9 @@ final class FaceAnimator {
     private func desiredClock() -> Clock {
         switch tone {
         case .orange:
+            if still {
+                return .stopped
+            }
             return .frames(move == nil ? 1.0 / 12.0 : 1.0 / 20.0)
         case .grey:
             return blinkOn ? .frames(1.0 / 20.0) : .waiting

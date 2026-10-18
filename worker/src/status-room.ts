@@ -196,11 +196,17 @@ export class StatusRoom extends DurableObject<Env> {
 	}
 
 	/**
-	 * The job clock. A finish keeps the working row's start.
+	 * The job clock. A heartbeat keeps the stored start (or starts now if this bot is new)
+	 * and ignores any started_at on that post. last_posted_at still updates on every upsert.
+	 * A finish keeps the working row's start.
 	 * A working post that omits started_at, for a bot that was not already working, starts now.
-	 * A repeat of the same status keeps the stored start. last_posted_at is separate and always updates.
+	 * A repeat of the same status keeps the stored start.
 	 */
 	private resolveStarted(post: IncomingPost, existing: BotRow | null): string {
+		if (post.heartbeat) {
+			if (existing?.started_at) return existing.started_at;
+			return new Date().toISOString();
+		}
 		if (isFinished(post.status) && existing?.status === "working" && existing.started_at) {
 			return existing.started_at;
 		}

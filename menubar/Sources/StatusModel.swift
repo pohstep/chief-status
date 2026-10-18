@@ -46,6 +46,22 @@ struct Bot: Decodable, Identifiable {
         return ISODate.date(from: startedAt)
     }
 
+    /// Working or idle, and the last post is at least `afterMinutes` old. No alert goes with this.
+    func isQuiet(now: Date, afterMinutes: Int) -> Bool {
+        if status != "working" && status != "idle" { return false }
+        if afterMinutes <= 0 { return false }
+        guard let posted = freshnessDate() else { return false }
+        return now.timeIntervalSince(posted) >= Double(afterMinutes) * 60
+    }
+
+    /// "no update in 12 min". The number is how long it has been, not the setting.
+    func noUpdateLabel(now: Date) -> String {
+        guard let posted = freshnessDate() else { return "no update" }
+        let minutes = Int(now.timeIntervalSince(posted) / 60)
+        let shown = minutes < 1 ? 1 : minutes
+        return "no update in \(shown) min"
+    }
+
     func isStale(now: Date, afterMinutes: Int) -> Bool {
         guard status == "working", let start = freshnessDate() else { return false }
         return now.timeIntervalSince(start) >= Double(afterMinutes) * 60
@@ -253,6 +269,8 @@ final class StatusModel: ObservableObject {
     @Published var needsYouSound = false
     /// Sound-only repeat. Off until the user picks 2, 5, 10 or 15 minutes.
     @Published var needsYouReminderMinutes = 0
+    /// Quiet label once the last post is this old. Default 10. Not an alert.
+    @Published var quietAfterMinutes = QuietAfter.fallback
 
     /// What the feed sent. `bots` is this plus local links and local Clear.
     private var feedBots: [Bot] = []
@@ -322,6 +340,7 @@ final class StatusModel: ObservableObject {
         // Notification permission is not asked here. The failure banner asks only when that switch is turned on.
         needsYouSound = NeedsYouSettings.storedBool(NeedsYouSettings.soundKey, fallback: false)
         needsYouReminderMinutes = NeedsYouSettings.storedReminder()
+        quietAfterMinutes = QuietAfter.stored()
         links = ConfigStore.readLinks()
         refresh()
         connectLive()
@@ -704,6 +723,13 @@ final class StatusModel: ObservableObject {
         reminderTimer?.invalidate()
         reminderTimer = nil
         armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" }, restartTimer: true)
+        notify()
+    }
+
+    func setQuietAfter(_ minutes: Int) {
+        let next = QuietAfter.choices.contains(minutes) ? minutes : QuietAfter.fallback
+        quietAfterMinutes = next
+        UserDefaults.standard.set(next, forKey: QuietAfter.key)
         notify()
     }
 
