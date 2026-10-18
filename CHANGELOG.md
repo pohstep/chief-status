@@ -7,7 +7,7 @@ In plain words:
 - **A sound when a bot needs you, off until you turn it on.** The moment a bot posts `needs_input`, and **Sound alert when a bot needs you** is on, the Mac speaks "<Bot> needs your approval" when the post sets `approval`, and "<Bot> needs you" otherwise. It speaks once, through the same voice as a failure. The menu bar stays the still **?** cube from 1.4. Red still wins. The spoken line does not check Focus.
 - **A sound-only reminder is off.** Settings can set 2, 5, 10 or 15 minutes. It speaks at most 3 times, then stops until a new bot starts waiting. A new waiter restarts the interval, so a reminder does not land right after the first spoken line.
 - The feed accepts an optional `approval` boolean on a status post. It is stored and returned only as meaningful for `needs_input`. Older apps ignore it. `post-status.sh` takes `--approval` or `CHIEF_STATUS_APPROVAL=1`.
-- README, version and the Homebrew cask move to 1.5.0. The cask checksum is `REPLACE_WITH_SHA256` until the disk image is built. Nothing in 1.5.0 is released yet.
+- README, version and the Homebrew cask move to 1.5.0. The cask checksum is the 1.5.0 disk image's SHA-256, `09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e`.
 - **Send a test post** uses a one-off name, `ChiefStatusTest-<unix time>`, then posts that bot as idle and deletes only that name.
 - **The 404 follows the last post.** The feed stores `last_posted_at` on every post. A long job that keeps posting stays orange. A working post with no `started_at`, for a bot that was not already working, sets `started_at` to now.
 - **Open at login is only the Settings switch.** `./install.sh` no longer writes a LaunchAgent. The app removes `com.chiefstatus.menubar` if an older install left it.
@@ -36,7 +36,7 @@ Details:
 - **Check for updates** calls `https://api.github.com/repos/pohstep/chief-status/releases/latest` from the button only. `tag_name` is compared with `CFBundleShortVersionString` after a leading `v` is stripped. A match says "You're up to date". Anything else says "Version X is available", with **Download** opening `html_url` and the hint `brew upgrade --cask chief-status`. A network or parse failure says to try again when online. Nothing from the check is stored.
 - Cask: `uninstall quit: "com.chiefstatus.menubar"`. `zap` already deletes `~/Library/Application Support/Chief Status` and `~/Library/Preferences/com.chiefstatus.menubar.plist`. The caveat leads with Open Anyway for macOS 15, and right-click → Open for macOS 13–14.
 - A `working` post with `"heartbeat": true` keeps the stored `started_at`, or sets it to now when the bot is new, and ignores `started_at` on that post. `last_posted_at` still updates. A heartbeat on any other status, or a non-boolean `heartbeat`, is `400`. `heartbeat.sh` posts that body in the background. Settings key `quietAfterMinutes` (missing means 10) is what the panel uses for the quiet label.
-- Version `1.5.0` (`CFBundleVersion` 6). User-Agent `ChiefStatus/1.5.0`. The cask URL follows the version. `sha256` is `REPLACE_WITH_SHA256`.
+- Version `1.5.0` (`CFBundleVersion` 6). User-Agent `ChiefStatus/1.5.0`. The cask URL follows the version. `sha256` is `09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e`.
 
 ## v1.4.0 — 2026-10-19
 

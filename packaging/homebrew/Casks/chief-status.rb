@@ -1,8 +1,8 @@
 cask "chief-status" do
   version "1.5.0"
 
-  # SHA-256 of Chief-Status-1.5.0.dmg. Nothing is released yet, so this stays REPLACE_WITH_SHA256.
-  sha256 "REPLACE_WITH_SHA256"
+  # SHA-256 of Chief-Status-1.5.0.dmg on the v1.5.0 release.
+  sha256 "09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e"
   url "https://github.com/pohstep/chief-status/releases/download/v#{version}/Chief-Status-#{version}.dmg"
 
   name "Chief Status"

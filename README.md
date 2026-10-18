@@ -65,6 +65,7 @@ There are three parts:
 ## Download and install
 
 1. Download `Chief-Status-1.5.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer.
+   - **Or, with Homebrew:** `brew install --cask pohstep/tap/chief-status`. This puts **Chief Status** in Applications for you, so skip step 2 and go to step 3.
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
    - **macOS 15 Sequoia or newer:** click **Done**. Open **System Settings → Privacy & Security**, scroll down to *"Chief Status was blocked…"*, click **Open Anyway**, and type your Mac password.
@@ -86,7 +87,13 @@ Each release lists the SHA-256 of its disk image. The disk image is built with `
 shasum -a 256 Chief-Status-1.5.0.dmg
 ```
 
-v1.5.0 is not on the release page yet. When the disk image is attached, the release lists its SHA-256, and the command above must print that same value. The Homebrew cask in this repo says `REPLACE_WITH_SHA256` in that spot until then. If a download's checksum does not match the release page, delete the file and download it again.
+For v1.5.0 it must print:
+
+```
+09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e  Chief-Status-1.5.0.dmg
+```
+
+The release page and the Homebrew cask list the same value. If a download's checksum does not match, delete the file and download it again.
 
 ### Why does macOS warn me?
 
@@ -485,11 +492,17 @@ Do not put the read token in `wrangler.toml` or in `.dev.vars`. With the require
 Homebrew can install the release disk image, so you don't need the Command Line Tools:
 
 ```bash
+brew install --cask pohstep/tap/chief-status
+```
+
+That one line adds the tap and installs the app. The longer form does the same:
+
+```bash
 brew tap pohstep/tap
 brew install --cask chief-status
 ```
 
-The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.5.0.dmg`. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`. v1.5.0 is not released yet, so that recipe's `sha256` is `REPLACE_WITH_SHA256` until the disk image exists.
+The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.5.0.dmg`. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`. Its `sha256` is `09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e`, the same as on the release page.
 
 The cask installs **Chief Status** into `/Applications` and quits the app before an uninstall. The app is unsigned. The first time macOS blocks it:
 
