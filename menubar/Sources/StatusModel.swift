@@ -187,6 +187,15 @@ final class StatusModel: ObservableObject {
     @Published var todayExpanded = true
     @Published var staleAfterMinutes = 60
     @Published var appearance: AppearanceChoice = .system
+    /// The post password is kept in memory only, so Settings can show and copy the bot prompt.
+    /// It is not written to disk and it is never logged.
+    @Published var postPassword = ""
+    @Published var readToken = ""
+    @Published var openAtLogin = false
+    @Published var loginNote: String?
+    @Published var copyNote: String?
+    @Published var testNote: String?
+    @Published var sendingTest = false
 
     /// What the feed sent. `bots` is this plus local links and local Clear.
     private var feedBots: [Bot] = []
@@ -242,6 +251,8 @@ final class StatusModel: ObservableObject {
         alertOnFailure = ConfigStore.readAlert()
         todayExpanded = ConfigStore.readTodayExpanded()
         appearance = AppearanceChoice.stored()
+        readToken = ReadTokenStore.read()
+        openAtLogin = LoginItem.isEnabled()
         links = ConfigStore.readLinks()
         refresh()
         connectLive()
@@ -286,6 +297,7 @@ final class StatusModel: ObservableObject {
     }
 
     func saveAddress() {
+        commitReadToken(reconnect: false)
         guard let normalized = ConfigStore.normalize(draftURL) else {
             setupError = "Use a full address, starting with https://"
             notify()
@@ -297,6 +309,141 @@ final class StatusModel: ObservableObject {
         setupError = nil
         refresh()
         connectLive()
+    }
+
+    /// Writes the read token and, when it changed, reads the feed again with the new one.
+    func commitReadToken(reconnect: Bool = true) {
+        let trimmed = readToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = trimmed != ReadTokenStore.read()
+        readToken = trimmed
+        ReadTokenStore.write(trimmed)
+        if changed && reconnect {
+            refresh()
+            connectLive()
+        }
+    }
+
+    func setOpenAtLogin(_ on: Bool) {
+        do {
+            try LoginItem.setEnabled(on)
+        } catch {
+            openAtLogin = LoginItem.isEnabled()
+            loginNote = "macOS didn't allow it. Use System Settings → General → Login Items."
+            notify()
+            return
+        }
+        if LoginItem.needsApproval() {
+            openAtLogin = on
+            loginNote = "Allow Chief Status in System Settings → General → Login Items."
+        } else {
+            openAtLogin = LoginItem.isEnabled()
+            loginNote = nil
+        }
+        notify()
+    }
+
+    /// Fills the feed address and the in-memory post password from a setup link.
+    /// The URL is not logged.
+    func applySetupURL(_ url: URL) {
+        guard let parsed = SetupShare.parse(url) else { return }
+        if !parsed.password.isEmpty {
+            postPassword = parsed.password
+        }
+        editingAddress = true
+        if let normalized = ConfigStore.normalize(parsed.feed) {
+            ConfigStore.write(feedURL: normalized)
+            feedURL = normalized
+            draftURL = normalized
+            setupError = nil
+            notify()
+            refresh()
+            connectLive()
+        } else if !parsed.feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            setupError = "That setup link's feed address needs to start with https://"
+            notify()
+        } else {
+            notify()
+        }
+    }
+
+    /// Copies text the user asked to copy. The text is not logged.
+    func copyText(_ text: String) {
+        if text.isEmpty { return }
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+        copyNote = "Copied"
+        notify()
+    }
+
+    func sendTestPost() {
+        if sendingTest { return }
+        let raw = draftURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? feedURL : draftURL
+        guard let normalized = ConfigStore.normalize(raw) else {
+            editingAddress = true
+            setupError = "Use a full address, starting with https://"
+            notify()
+            return
+        }
+        if postPassword.isEmpty {
+            editingAddress = true
+            draftURL = normalized
+            setupError = "Add the post password, then send the test."
+            notify()
+            return
+        }
+        guard let url = URL(string: normalized) else {
+            editingAddress = true
+            setupError = "Use a full address, starting with https://"
+            notify()
+            return
+        }
+        let payload = ["bot": "Test", "status": "working", "task": "test post"]
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        ConfigStore.write(feedURL: normalized)
+        feedURL = normalized
+        draftURL = normalized
+        sendingTest = true
+        setupError = nil
+        testNote = "Sending…"
+        notify()
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("ChiefStatus/1.4.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Bearer \(postPassword)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body
+        let task = session.dataTask(with: request) { [weak self] _, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.sendingTest = false
+                self.testNote = nil
+                if error != nil || response == nil {
+                    self.editingAddress = true
+                    self.setupError = "Couldn't reach the feed."
+                    self.notify()
+                    return
+                }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 200 {
+                    self.setupError = nil
+                    self.editingAddress = false
+                    self.notify()
+                    self.refresh()
+                    self.connectLive()
+                } else if status == 401 {
+                    self.editingAddress = true
+                    self.setupError = "The post password was refused."
+                    self.notify()
+                } else {
+                    self.editingAddress = true
+                    self.setupError = "The feed didn't accept the test post."
+                    self.notify()
+                }
+            }
+        }
+        task.resume()
     }
 
     func setAlertOnFailure(_ on: Bool) {
@@ -382,9 +529,10 @@ final class StatusModel: ObservableObject {
         }
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.setValue("ChiefStatus/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("ChiefStatus/1.4.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        applyReadToken(&request)
         task?.cancel()
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
@@ -408,6 +556,11 @@ final class StatusModel: ObservableObject {
         noteNetworkSuccess()
         guard let http = response as? HTTPURLResponse else {
             errorText = "Couldn't reach the feed."
+            notify()
+            return
+        }
+        if http.statusCode == 401 {
+            errorText = "This feed wants a read token. Add it in Settings."
             notify()
             return
         }
@@ -511,8 +664,9 @@ final class StatusModel: ObservableObject {
         }
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
-        request.setValue("ChiefStatus/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("ChiefStatus/1.4.0", forHTTPHeaderField: "User-Agent")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        applyReadToken(&request)
         let socket = session.webSocketTask(with: request)
         liveTask = socket
         socket.resume()
@@ -593,6 +747,14 @@ final class StatusModel: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         reconnect = timer
+    }
+
+    /// Sends the saved read token when one is set. The token is not logged.
+    private func applyReadToken(_ request: inout URLRequest) {
+        let token = ReadTokenStore.read()
+        if !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
     }
 
     private func notify() {

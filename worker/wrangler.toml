@@ -15,26 +15,22 @@ head_sampling_rate = 1
 enabled = true
 head_sampling_rate = 1
 
-# The password agents send is NOT written here.
+# The password bots send is NOT written here.
 # Set it with: npx wrangler secret put STATUS_TOKEN
+# READ_TOKEN is optional and is not required, so a deploy works without it.
+# When that secret is set, GET /status and /status/live require Authorization: Bearer <token>.
+# Set it in the dashboard, or with: npx wrangler secret put READ_TOKEN
 [secrets]
 required = [ "STATUS_TOKEN" ]
 
-# Optional pre-seed and order. A bot's first POST registers it even if it is not listed.
-# Leave this empty to start with no rows. Optional link: Agent1|https://example.com/agent1
-# or BOT_URLS below.
+# BOTS is an optional starter list and order. Leave it empty: a new feed has no rows
+# until a bot posts. Optional link: Agent1|https://example.com/agent1 or BOT_URLS below.
 # TZ is an IANA name used for the daily job log. STALE_MINUTES marks a long working row.
 [vars]
-BOTS = "Agent1,Agent2"
+BOTS = ""
 BOT_URLS = ""
 TZ = "UTC"
 STALE_MINUTES = "60"
-
-[[kv_namespaces]]
-binding = "STATUS"
-# Replace this with the id printed by: npx wrangler kv namespace create STATUS
-# Kept so an existing v1.1 feed can be copied in on the first request.
-id = "00000000000000000000000000000001"
 
 [[durable_objects.bindings]]
 name = "ROOM"

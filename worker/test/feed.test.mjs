@@ -40,32 +40,34 @@ function postStatus(body) {
 	});
 }
 
-function startWorker() {
+function startWorker(options = {}) {
+	const listenPort = options.port ?? port;
+	const inspectorPort = options.inspectorPort ?? 8892;
 	const persist = fs.mkdtempSync(path.join(os.tmpdir(), "chief-status-"));
 	const bin = path.join(workerDir, "node_modules", ".bin", "wrangler");
-	const child = spawn(
-		bin,
-		[
-			"dev",
-			"--ip",
-			"127.0.0.1",
-			"--port",
-			String(port),
-			"--inspector-port",
-			"8892",
-			"--local",
-			"--persist-to",
-			persist,
-			"--show-interactive-dev-session=false",
-			"--log-level",
-			"warn",
-		],
-		{
-			cwd: workerDir,
-			env: { ...process.env, CI: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
+	const args = [
+		"dev",
+		"--ip",
+		"127.0.0.1",
+		"--port",
+		String(listenPort),
+		"--inspector-port",
+		String(inspectorPort),
+		"--local",
+		"--persist-to",
+		persist,
+		"--show-interactive-dev-session=false",
+		"--log-level",
+		"warn",
+	];
+	if (options.readToken) {
+		args.push("--var", `READ_TOKEN:${options.readToken}`);
+	}
+	const child = spawn(bin, args, {
+		cwd: workerDir,
+		env: { ...process.env, CI: "1" },
+		stdio: ["ignore", "pipe", "pipe"],
+	});
 
 	let log = "";
 	let exited = false;
@@ -85,7 +87,7 @@ function startWorker() {
 		while (Date.now() < deadline) {
 			if (exited) throw new Error(`wrangler exited before it was ready\n${log}`);
 			try {
-				const response = await fetch(`http://127.0.0.1:${port}/`);
+				const response = await fetch(`http://127.0.0.1:${listenPort}/`);
 				if (response.status > 0) return;
 			} catch {
 				// not listening yet
@@ -117,6 +119,122 @@ function startWorker() {
 	};
 }
 
+function emptyBody(body) {
+	return body === "";
+}
+
+async function liveSnapshot(url, headers) {
+	return new Promise((resolve, reject) => {
+		const ws = headers ? new WebSocket(url, { headers }) : new WebSocket(url);
+		const messages = [];
+		const timer = setTimeout(() => {
+			ws.close();
+			reject(new Error(`websocket timed out after ${messages.length} message(s)`));
+		}, 8000);
+		ws.addEventListener("error", () => {
+			clearTimeout(timer);
+			reject(new Error("websocket error"));
+		});
+		ws.addEventListener("message", (event) => {
+			messages.push(JSON.parse(String(event.data)));
+			if (messages.length >= 1) {
+				clearTimeout(timer);
+				ws.close();
+				resolve(messages);
+			}
+		});
+	});
+}
+
+async function liveRejected(url) {
+	return new Promise((resolve, reject) => {
+		const ws = new WebSocket(url);
+		let settled = false;
+		const finish = (ok, error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			try {
+				ws.close();
+			} catch {
+				// already closed
+			}
+			if (ok) resolve();
+			else reject(error);
+		};
+		const timer = setTimeout(() => finish(false, new Error("unauthorized websocket stayed open")), 4000);
+		ws.addEventListener("message", () => finish(false, new Error("unauthorized websocket received a message")));
+		ws.addEventListener("error", () => finish(true));
+		ws.addEventListener("close", () => finish(true));
+	});
+}
+
+/** A second worker with READ_TOKEN set. The first worker leaves the secret unset. */
+async function runReadTokenTests() {
+	const readToken = "test-read-chief";
+	const listenPort = 8893;
+	const worker = startWorker({ port: listenPort, inspectorPort: 8894, readToken });
+	const base = `http://127.0.0.1:${listenPort}`;
+	try {
+		await worker.ready;
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		const root = await request(`${base}/`);
+		assert(root.status === 200, `GET / stays open when a read token is set, was ${root.status}`);
+
+		const missing = await request(`${base}/status`);
+		assert(missing.status === 401, `GET /status without a read token ${missing.status}`);
+		assert(emptyBody(missing.body), `GET /status without a read token should have an empty body, was ${JSON.stringify(missing.body)}`);
+
+		const wrong = await request(`${base}/status`, { headers: { Authorization: "Bearer wrong-token" } });
+		assert(wrong.status === 401, `GET /status with the wrong read token ${wrong.status}`);
+		assert(emptyBody(wrong.body), "wrong read token should have an empty body");
+
+		const postPassword = await request(`${base}/status`, { headers: { Authorization: `Bearer ${token}` } });
+		assert(postPassword.status === 401, `the post password must not count as the read token, was ${postPassword.status}`);
+		assert(emptyBody(postPassword.body), "refusing the post password should have an empty body");
+
+		const liveMissing = await request(`${base}/status/live`);
+		assert(liveMissing.status === 401, `GET /status/live without a read token ${liveMissing.status}`);
+		assert(emptyBody(liveMissing.body), "live feed without a read token should have an empty body");
+		await liveRejected(`${base.replace("http", "ws")}/status/live`);
+
+		const opened = await request(`${base}/status`, { headers: { Authorization: `Bearer ${readToken}` } });
+		assert(opened.status === 200, `GET /status with the read token ${opened.status} ${JSON.stringify(opened.body)}`);
+		assert(Array.isArray(opened.body.bots) && opened.body.bots.length === 0, "a protected feed still starts empty");
+
+		const posted = await request(`${base}/status`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ bot: "Reader", status: "working", task: "behind the token" }),
+		});
+		assert(posted.status === 200, `POST still uses the post password, was ${posted.status} ${JSON.stringify(posted.body)}`);
+
+		const afterPost = await request(`${base}/status`, { headers: { Authorization: `Bearer ${readToken}` } });
+		assert(
+			afterPost.body.bots.some((bot) => bot.bot === "Reader" && bot.status === "working"),
+			"the read token should see the post",
+		);
+
+		const live = await liveSnapshot(`${base.replace("http", "ws")}/status/live`, {
+			Authorization: `Bearer ${readToken}`,
+		});
+		assert(live[0].type === "snapshot", "an authorized live feed should send a snapshot");
+		assert(
+			live[0].bots.some((bot) => bot.bot === "Reader"),
+			"the authorized snapshot should include the posted bot",
+		);
+
+		const upgrade = await request(`${base}/status/live`, { headers: { Authorization: `Bearer ${readToken}` } });
+		assert(upgrade.status === 426, `authorized live feed without an upgrade should stay 426, was ${upgrade.status}`);
+	} finally {
+		await worker.stop();
+	}
+}
+
 async function main() {
 	fs.writeFileSync(devVarsPath, `STATUS_TOKEN=${token}\n`);
 	const worker = startWorker();
@@ -136,18 +254,14 @@ async function main() {
 		assert(first.status === 200, `GET /status ${first.status} ${JSON.stringify(first.body)}`);
 		assert(Array.isArray(first.body.bots), "bots should be an array");
 		assert(
-			first.body.bots.map((bot) => bot.bot).join(",") === "Agent1,Agent2",
-			`seed order was ${first.body.bots.map((bot) => bot.bot).join(",")}`,
-		);
-		assert(
-			first.body.bots.every((bot) => bot.status === "idle" && bot.task === ""),
-			"seed bots should be idle",
+			first.body.bots.length === 0,
+			`a new feed should start empty, saw ${first.body.bots.map((bot) => bot.bot).join(",")}`,
 		);
 		assert(first.headers.get("cache-control") === "no-store", "GET should not be cached");
 
 		const again = await request(`${base}/status/`);
 		assert(again.status === 200, "trailing slash should work");
-		assert(again.body.bots[0].bot === "Agent1", "second read should keep the seed");
+		assert(again.body.bots.length === 0, "second read should stay empty");
 
 		const noAuth = await request(`${base}/status`, {
 			method: "POST",
@@ -196,9 +310,10 @@ async function main() {
 		const after = await request(`${base}/status`);
 		const agent1 = after.body.bots.find((bot) => bot.bot === "Agent1");
 		const agent2 = after.body.bots.find((bot) => bot.bot === "Agent2");
+		assert(agent1, "Agent1 should exist after its first post");
 		assert(agent1.status === "working", "Agent1 should be working");
 		assert(agent1.task === "drafting the homepage", "task should be stored");
-		assert(agent2.status === "idle", "other bots should stay idle");
+		assert(!agent2, "a bot that has not posted should not be seeded");
 
 		const replaced = await request(`${base}/status`, {
 			method: "POST",
@@ -236,8 +351,7 @@ async function main() {
 		assert(added.status === 200, `add bot ${added.status}`);
 		const withExtra = await request(`${base}/status`);
 		assert(
-			withExtra.body.bots.map((bot) => bot.bot).join(",") ===
-				"Agent1,Agent2,Sprocket",
+			withExtra.body.bots.map((bot) => bot.bot).join(",") === "Agent1,Sprocket",
 			`order ${withExtra.body.bots.map((bot) => bot.bot).join(",")}`,
 		);
 
@@ -420,7 +534,7 @@ async function main() {
 		);
 		const names = (await request(`${base}/status`)).body.bots.map((bot) => bot.bot);
 		assert(names.includes("Widget"), `Widget should register itself, saw ${names.join(",")}`);
-		assert(names.indexOf("Agent1") < names.indexOf("Widget"), "pre-seeded bots stay ahead of a new one");
+		assert(names.indexOf("Agent1") < names.indexOf("Widget"), "bots stay in the order they first posted");
 
 		const keptColor = await postStatus({
 			bot: "Widget",
@@ -572,6 +686,8 @@ async function main() {
 		assert(deleteRoot.status === 405, `DELETE /status should be 405, was ${deleteRoot.status}`);
 		const liveStill = await request(`${base}/status/live`);
 		assert(liveStill.status === 426, `GET /status/live without upgrade should stay 426, was ${liveStill.status}`);
+
+		await runReadTokenTests();
 
 		for (let i = 0; i < 201; i += 1) {
 			const stamp = new Date(Date.UTC(2026, 9, 18, 0, 0, i)).toISOString();

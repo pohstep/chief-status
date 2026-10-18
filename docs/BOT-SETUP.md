@@ -1,8 +1,40 @@
 # Tell an agent how to report status
 
-Paste the block below into the agent's instructions. It posts only for real jobs, and it leaves quick chat replies alone.
+The default is one `curl` prompt. In the app, open **Settings**, fill in the post password, and click **Copy prompt**. That copy already has your feed address and password in it. The app shows and copies that text. It does not save the password, and it does not log it.
 
-Replace the name, the colour, and the optional chat link. A bot cannot see its own colour, so the colour has to live in this prompt. The panel fills that bot's face with it. Delete the chat link lines if this bot has none. The first post registers the bot. It does not have to be listed in `BOTS` first.
+Paste the block below when you are writing the prompt by hand. Replace the name, the colour, the address, and the password. A bot cannot see its own colour, so the colour has to live in this prompt. The panel fills that bot's face with it. The first post registers the bot. It does not have to be listed in `BOTS` first. `BOTS` is only an optional starter list, and it ships empty.
+
+```text
+Your name is Agent1.
+Your colour is #3B82F6.
+
+You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it. Change Agent1 and the colour to this bot's own.
+
+When you start a real job that will take more than a minute or two, post to Chief Status with curl. Skip quick chat replies and lookups.
+
+Start of job:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"working","task":"one short line about the job","color":"#3B82F6"}'
+
+Job finished:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"done","task":"what finished"}'
+
+Job failed:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"failed","task":"what broke"}'
+
+Waiting on me:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"needs_input","task":"the question you need answered"}'
+
+Then always:
+curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"idle","task":""}'
+
+Never put passwords or secrets in the task line.
+```
+
+`started_at` is optional. On `working` and `needs_input`, leave it out and the feed uses the current time. On `done` or `failed`, leave it out. If that bot was working, the feed keeps the working start for the row and for today's log. Add `"url":"https://example.com/agent1"` when the row should open a chat. Leave `url` out and the previous link stays. Send `"url":""` to clear it. `"color"` works the same way.
+
+## If the bot has this repo
+
+Paste this instead when the bot can run a script from a checkout of Chief Status. It posts only for real jobs, and it leaves quick chat replies alone. Delete the chat link lines if this bot has none.
 
 ```text
 Your name is Agent1.
@@ -44,16 +76,7 @@ The script is `worker/scripts/post-status.sh`. It is plain `sh` plus `curl`, so 
 
 To take a bot off the feed (a test bot, or one you retired), run `worker/scripts/delete-bot.sh BOT` with the same `CHIEF_STATUS_URL` and `CHIEF_STATUS_TOKEN`. It calls `DELETE /status/<bot>` and removes that bot and its jobs for today.
 
-The same post, as one curl line:
-
-```bash
-curl -X POST "https://chief-status.<your-subdomain>.workers.dev/status" \
-  -H "Authorization: Bearer YOUR-TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"bot":"Agent1","status":"working","task":"one short line about the job","color":"#3B82F6"}'
-```
-
-`started_at` is optional. On `working`, leave it out and the feed uses the current time, or send when the job began, in UTC, like `2026-10-18T10:00:00Z`. On `done` or `failed`, leave it out. If that bot was working, the feed keeps the working start for the row and for today's log.
+The curl prompt at the top is the one to paste. On `working`, you can also send when the job began, in UTC, like `2026-10-18T10:00:00Z`. On `done` or `failed`, leave `started_at` out. If that bot was working, the feed keeps the working start for the row and for today's log.
 
 Add `"url":"https://example.com/agent1"` when you want the row to open a chat. Leave `url` out and the previous link stays. Send `"url":""` to clear it. `"color"` works the same way: omit it to keep the stored colour, or send `""` to clear it. With no colour stored, the panel picks a steady colour from the bot's name.
 

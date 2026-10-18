@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 enum ConfigStore {
     static var directory: URL {
@@ -142,6 +143,146 @@ enum ConfigStore {
             url += "/status"
         }
         return url
+    }
+}
+
+/// The read token lives in this app's private preferences, not the Keychain.
+/// An unsigned app would ask for Keychain access again after every update.
+enum ReadTokenStore {
+    static let defaultsKey = "readToken"
+
+    static func read() -> String {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func write(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: defaultsKey)
+        }
+    }
+}
+
+/// Open at login, the same switch Wordbit uses. macOS 13 ServiceManagement.
+enum LoginItem {
+    static func isEnabled() -> Bool {
+        return SMAppService.mainApp.status == .enabled
+    }
+
+    static func needsApproval() -> Bool {
+        return SMAppService.mainApp.status == .requiresApproval
+    }
+
+    static func setEnabled(_ on: Bool) throws {
+        let status = SMAppService.mainApp.status
+        if on {
+            if status != .enabled {
+                try SMAppService.mainApp.register()
+            }
+        } else if status == .enabled || status == .requiresApproval {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+}
+
+/// Feed address and post password carried by chiefstatus://setup and the bot prompt.
+/// These strings are shown in Settings and copied to the clipboard. Do not log them.
+enum SetupShare {
+    static let guide = "https://github.com/pohstep/chief-status#set-up-the-feed"
+    static let deployPage = "https://deploy.workers.cloudflare.com/?url=https://github.com/pohstep/chief-status/tree/main/worker"
+
+    struct Link {
+        var feed: String
+        var password: String
+    }
+
+    static func parse(_ url: URL) -> Link? {
+        guard let scheme = url.scheme, scheme.lowercased() == "chiefstatus" else { return nil }
+        let host = url.host?.lowercased() ?? ""
+        if host != "setup" { return nil }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        var feed = ""
+        var password = ""
+        let items = components.queryItems ?? []
+        for item in items {
+            let value = item.value ?? ""
+            if item.name == "feed" {
+                feed = value
+            } else if item.name == "password" {
+                password = value
+            }
+        }
+        return Link(feed: feed, password: password)
+    }
+
+    static func link(feed: String, password: String) -> String? {
+        guard let normalized = ConfigStore.normalize(feed), !password.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "chiefstatus"
+        components.host = "setup"
+        components.queryItems = [
+            URLQueryItem(name: "feed", value: normalized),
+            URLQueryItem(name: "password", value: password),
+        ]
+        return components.string
+    }
+
+    /// One paste for a bot. The address and the post password are filled in.
+    /// Returns nil until both are present. Never log the result.
+    static func botPrompt(feed: String, password: String) -> String? {
+        guard let normalized = ConfigStore.normalize(feed), !password.isEmpty else { return nil }
+        let address = shellEscape(normalized)
+        let secret = shellEscape(password)
+        let working = curl(address, secret, "working", "one short line about the job", ",\"color\":\"#3B82F6\"")
+        let done = curl(address, secret, "done", "what finished", "")
+        let failed = curl(address, secret, "failed", "what broke", "")
+        let needs = curl(address, secret, "needs_input", "the question you need answered", "")
+        let idle = curl(address, secret, "idle", "", "")
+        return """
+Your name is Agent1.
+Your colour is #3B82F6.
+
+You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it. Change Agent1 and the colour to this bot's own.
+
+When you start a real job that will take more than a minute or two, post to Chief Status with curl. Skip quick chat replies and lookups.
+
+Start of job:
+\(working)
+
+Job finished:
+\(done)
+
+Job failed:
+\(failed)
+
+Waiting on me:
+\(needs)
+
+Then always:
+\(idle)
+
+If you hand work to a background helper, post working while it runs, and done when it comes back.
+Never put passwords or secrets in the task line.
+"""
+    }
+
+    private static func curl(_ address: String, _ secret: String, _ status: String, _ task: String, _ extra: String) -> String {
+        return "curl -sS -X POST \"\(address)\" -H \"Authorization: Bearer \(secret)\" -H \"Content-Type: application/json\" -d '{\"bot\":\"Agent1\",\"status\":\"\(status)\",\"task\":\"\(task)\"\(extra)}'"
+    }
+
+    /// Escape a value that will sit inside double quotes in a shell command.
+    private static func shellEscape(_ value: String) -> String {
+        var out = ""
+        for character in value {
+            if character == "\\" || character == "\"" || character == "$" || character == "`" {
+                out.append("\\")
+            }
+            out.append(character)
+        }
+        return out
     }
 }
 

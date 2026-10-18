@@ -47,6 +47,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
 	}
 
 	if (request.method === "GET") {
+		const denied = await denyUnlessReader(request, env);
+		if (denied) return denied;
 		const snapshot = await env.ROOM.getByName("feed").snapshot();
 		return json(snapshot);
 	}
@@ -91,6 +93,8 @@ async function deleteBot(request: Request, env: Env, rawName: string): Promise<R
 }
 
 async function live(request: Request, env: Env): Promise<Response> {
+	const denied = await denyUnlessReader(request, env);
+	if (denied) return denied;
 	if (request.method !== "GET") {
 		return json({ error: "method not allowed" }, 405, { Allow: "GET" });
 	}
@@ -137,6 +141,29 @@ async function postStatus(request: Request, env: Env): Promise<Response> {
 function normalizePath(pathname: string): string {
 	const trimmed = pathname.replace(/\/+$/, "");
 	return trimmed === "" ? "/" : trimmed;
+}
+
+/**
+ * When the READ_TOKEN secret is set, reading the feed requires Authorization: Bearer <token>.
+ * A missing or wrong token is 401 with an empty body. When the secret is unset, reading stays open.
+ * The value is never logged.
+ */
+function configuredReadToken(env: Env): string | null {
+	const value = (env as { READ_TOKEN?: string }).READ_TOKEN;
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return null;
+	return trimmed;
+}
+
+async function denyUnlessReader(request: Request, env: Env): Promise<Response | null> {
+	const expected = configuredReadToken(env);
+	if (!expected) return null;
+	if (await authorized(request, expected)) return null;
+	return new Response(null, {
+		status: 401,
+		headers: { "Cache-Control": "no-store" },
+	});
 }
 
 async function authorized(request: Request, expected: string): Promise<boolean> {

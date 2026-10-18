@@ -21,7 +21,7 @@ enum Metrics {
     static func scrollContentHeight(for model: StatusModel) -> CGFloat {
         switch model.mode {
         case .setup:
-            return 272
+            return 640
         case .checking:
             return 48
         case .message:
@@ -56,7 +56,7 @@ enum Metrics {
             height += CGFloat(team.count) * 32
         }
         if model.bots.isEmpty && model.today.isEmpty {
-            height += 32
+            height += 110
         }
         height += 30
         if model.todayExpanded {
@@ -253,11 +253,19 @@ struct StatusPopoverView: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.bots.isEmpty && model.today.isEmpty {
-                Text("No bots yet.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(PanelTheme.ink2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 32)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No bots yet.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(PanelTheme.ink2)
+                    setupHelp
+                    if let note = model.testNote {
+                        Text(note)
+                            .font(.system(size: 11))
+                            .foregroundStyle(PanelTheme.ink2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 8)
             }
             if !needsBots.isEmpty {
                 Text("NEEDS YOU")
@@ -314,10 +322,12 @@ struct StatusPopoverView: View {
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(model.canCancelEdit ? "Paste a new feed address." : "Paste your feed address to begin.")
-                .font(.system(size: 12))
-                .foregroundStyle(PanelTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
+            if model.canCancelEdit {
+                Text("Paste a new feed address.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PanelTheme.ink2)
+            }
+            setupHelp
             TextField(
                 "Feed address",
                 text: $model.draftURL,
@@ -326,9 +336,62 @@ struct StatusPopoverView: View {
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 12))
             .onSubmit { model.saveAddress() }
-            Text(model.setupError ?? " ")
+            TextField(
+                "Post password",
+                text: $model.postPassword,
+                prompt: Text("The password bots use to post")
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            Text("Shown here so you can copy the bot prompt. Not saved.")
                 .font(.system(size: 11))
-                .foregroundStyle(model.setupError == nil ? Color.clear : PanelTheme.redText)
+                .foregroundStyle(PanelTheme.ink2)
+            TextField(
+                "Read token",
+                text: $model.readToken,
+                prompt: Text("Optional")
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            .onSubmit { model.commitReadToken() }
+            Text("Optional. Only if this feed asks for one. Saved on this Mac, and sent when the app reads the feed.")
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            if let prompt = SetupShare.botPrompt(feed: shareFeed, password: model.postPassword) {
+                Text("Bot prompt")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PanelTheme.ink)
+                TextEditor(text: .constant(prompt))
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(height: 120)
+                if let link = SetupShare.link(feed: shareFeed, password: model.postPassword) {
+                    Text("Setup link")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PanelTheme.ink)
+                    Text(link)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(PanelTheme.ink2)
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                    HStack(spacing: 8) {
+                        Button("Copy prompt") { model.copyText(prompt) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("Copy link") { model.copyText(link) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+            } else {
+                Text("Add the feed address and the post password to see the bot prompt.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(model.setupError ?? model.copyNote ?? model.testNote ?? " ")
+                .font(.system(size: 11))
+                .foregroundStyle(model.setupError == nil ? PanelTheme.ink2 : PanelTheme.redText)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: 28, alignment: .top)
@@ -341,6 +404,19 @@ struct StatusPopoverView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
+            }
+            Toggle("Open at login", isOn: Binding(
+                get: { model.openAtLogin },
+                set: { model.setOpenAtLogin($0) }
+            ))
+            .font(.system(size: 12))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            if let note = model.loginNote {
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Toggle("Alert when a bot fails", isOn: Binding(
                 get: { model.alertOnFailure },
@@ -374,6 +450,35 @@ struct StatusPopoverView: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.top, 4)
+    }
+
+    /// Address used to fill the prompt. The draft wins while Settings is open.
+    private var shareFeed: String {
+        let draft = model.draftURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !draft.isEmpty { return draft }
+        return model.feedURL
+    }
+
+    private var setupHelp: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let page = URL(string: SetupShare.guide) {
+                Link("No feed yet? Set one up", destination: page)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            Button(model.sendingTest ? "Sending…" : "Send a test post") { model.sendTestPost() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(model.sendingTest)
+            Button("Deploy to Cloudflare") { openDeployPage() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+    }
+
+    private func openDeployPage() {
+        if let page = URL(string: SetupShare.deployPage) {
+            NSWorkspace.shared.open(page)
+        }
     }
 
     private var checking: some View {
@@ -1595,6 +1700,7 @@ enum PreviewRenderer {
 
             model.editingAddress = true
             model.draftURL = "https://example.com/status"
+            model.postPassword = "example-password"
             let setupHeight = Metrics.height(for: model)
             let settings = ZStack {
                 Rectangle().fill(dark ? Color(white: 0.16) : Color(white: 0.93))

@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Darwin
 import SwiftUI
 
@@ -25,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let animator = FaceAnimator()
     private var lockFD: Int32 = -1
     private var barState: BarState?
+    private var pendingReveal = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !takeSingleInstanceLock() {
@@ -76,6 +78,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             suspensionBehavior: .deliverImmediately
         )
+
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+        if pendingReveal {
+            revealPanel()
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            model.applySetupURL(url)
+        }
+        revealPanel()
+    }
+
+    /// chiefstatus://setup links. The URL is not logged: it carries the post password.
+    @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue else { return }
+        guard let url = URL(string: text) else { return }
+        model.applySetupURL(url)
+        revealPanel()
+    }
+
+    private func revealPanel() {
+        guard let popover = popover, statusItem != nil else {
+            pendingReveal = true
+            return
+        }
+        pendingReveal = false
+        if popover.isShown { return }
+        togglePopover(nil)
     }
 
     @objc private func togglePanelFromNotification(_ notification: Notification) {
@@ -109,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        model.commitReadToken()
         model.setPanelOpen(false)
         statusItem.button?.highlight(false)
     }
