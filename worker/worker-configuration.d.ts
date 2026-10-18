@@ -8,6 +8,7 @@ interface __BaseEnv_Env {
 	TZ: "UTC";
 	STALE_MINUTES: "60";
 	STATUS_TOKEN: string;
+	READ_TOKEN?: string;
 	ROOM: DurableObjectNamespace<import("./src/index").StatusRoom>;
 }
 declare namespace Cloudflare {

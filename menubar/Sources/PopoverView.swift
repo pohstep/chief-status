@@ -21,7 +21,7 @@ enum Metrics {
     static func scrollContentHeight(for model: StatusModel) -> CGFloat {
         switch model.mode {
         case .setup:
-            return 272
+            return 330
         case .checking:
             return 48
         case .message:
@@ -326,6 +326,18 @@ struct StatusPopoverView: View {
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 12))
             .onSubmit { model.saveAddress() }
+            SecureField(
+                "Read token (optional)",
+                text: $model.readToken,
+                prompt: Text("Read token (optional)")
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            .onSubmit { model.commitReadToken() }
+            Text("Only if your feed is locked. Saved on this Mac and sent when the app reads the feed.")
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
             Text(model.setupError ?? " ")
                 .font(.system(size: 11))
                 .foregroundStyle(model.setupError == nil ? Color.clear : PanelTheme.redText)

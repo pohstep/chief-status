@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.3.1 — 2026-10-18
+
+In plain words:
+
+- **You can now keep your feed private.** Set a read token on the feed, paste the same token into the app, and nobody else can read your bots' names or tasks. Without the token, the feed replies with an empty "401 Unauthorized". See [Keep your feed private](README.md#keep-your-feed-private).
+- **Settings has a new Read token (optional) field.** It's hidden as you type, kept on this Mac only, and sent whenever the app reads the feed.
+- **A clear message** when the feed is locked and the app has no token, or the wrong one: *"This feed is locked. Add its read token in Settings."*
+- **Your bots don't change.** Posting still uses the same password. A feed without a read token works exactly as before.
+
+Details:
+
+- Worker: the `READ_TOKEN` secret is optional and is not in `secrets.required`. When it's set, `GET /status` and `/status/live` need `Authorization: Bearer <token>`; `/status/live` also accepts `?token=<token>`. A missing or wrong token gets 401 with an empty body. The post password is not accepted as a read token. `POST` and `DELETE` are unchanged. `GET /` stays open.
+- App: the token is in UserDefaults (`com.chiefstatus.menubar`, key `readToken`), not the Keychain, so updates don't bring Keychain prompts. It's sent as a Bearer header on the feed read and on the live connection, only when it's not empty.
+- Tests: `npm test` now also starts a second local feed with `READ_TOKEN` set and checks 401 with an empty body for no token, a wrong token and the post password, then 200 and a live snapshot with the right token (header or `?token=`).
+
 ## v1.3.0 — 2026-10-18
 
 In plain words:

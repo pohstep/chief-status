@@ -145,6 +145,26 @@ enum ConfigStore {
     }
 }
 
+/// The read token lives in this app's private preferences, not the Keychain.
+/// An unsigned app would ask for Keychain access again after every update.
+enum ReadTokenStore {
+    static let defaultsKey = "readToken"
+
+    static func read() -> String {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func write(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: defaultsKey)
+        }
+    }
+}
+
 /// Settings → Appearance. Stored in UserDefaults (com.chiefstatus.menubar, key "appearance").
 enum AppearanceChoice: String, CaseIterable, Identifiable {
     case system

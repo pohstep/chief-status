@@ -17,6 +17,9 @@ head_sampling_rate = 1
 
 # The password agents send is NOT written here.
 # Set it with: npx wrangler secret put STATUS_TOKEN
+# READ_TOKEN is optional and is not required, so a deploy works without it.
+# When that secret is set, GET /status and /status/live require Authorization: Bearer <token>.
+# Set it in the dashboard, or with: npx wrangler secret put READ_TOKEN
 [secrets]
 required = [ "STATUS_TOKEN" ]
 

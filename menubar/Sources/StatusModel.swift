@@ -187,6 +187,7 @@ final class StatusModel: ObservableObject {
     @Published var todayExpanded = true
     @Published var staleAfterMinutes = 60
     @Published var appearance: AppearanceChoice = .system
+    @Published var readToken = ""
 
     /// What the feed sent. `bots` is this plus local links and local Clear.
     private var feedBots: [Bot] = []
@@ -242,6 +243,7 @@ final class StatusModel: ObservableObject {
         alertOnFailure = ConfigStore.readAlert()
         todayExpanded = ConfigStore.readTodayExpanded()
         appearance = AppearanceChoice.stored()
+        readToken = ReadTokenStore.read()
         links = ConfigStore.readLinks()
         refresh()
         connectLive()
@@ -286,6 +288,7 @@ final class StatusModel: ObservableObject {
     }
 
     func saveAddress() {
+        commitReadToken(reconnect: false)
         guard let normalized = ConfigStore.normalize(draftURL) else {
             setupError = "Use a full address, starting with https://"
             notify()
@@ -297,6 +300,18 @@ final class StatusModel: ObservableObject {
         setupError = nil
         refresh()
         connectLive()
+    }
+
+    /// Writes the read token and, when it changed, reads the feed again with the new one.
+    func commitReadToken(reconnect: Bool = true) {
+        let trimmed = readToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = trimmed != ReadTokenStore.read()
+        readToken = trimmed
+        ReadTokenStore.write(trimmed)
+        if changed && reconnect {
+            refresh()
+            connectLive()
+        }
     }
 
     func setAlertOnFailure(_ on: Bool) {
@@ -385,6 +400,7 @@ final class StatusModel: ObservableObject {
         request.setValue("ChiefStatus/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        applyReadToken(&request)
         task?.cancel()
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
@@ -408,6 +424,11 @@ final class StatusModel: ObservableObject {
         noteNetworkSuccess()
         guard let http = response as? HTTPURLResponse else {
             errorText = "Couldn't reach the feed."
+            notify()
+            return
+        }
+        if http.statusCode == 401 {
+            errorText = "This feed is locked. Add its read token in Settings."
             notify()
             return
         }
@@ -513,6 +534,7 @@ final class StatusModel: ObservableObject {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("ChiefStatus/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        applyReadToken(&request)
         let socket = session.webSocketTask(with: request)
         liveTask = socket
         socket.resume()
@@ -593,6 +615,14 @@ final class StatusModel: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         reconnect = timer
+    }
+
+    /// Sends the saved read token when one is set. The token is not logged.
+    private func applyReadToken(_ request: inout URLRequest) {
+        let token = ReadTokenStore.read()
+        if !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
     }
 
     private func notify() {

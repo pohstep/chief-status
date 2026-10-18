@@ -40,32 +40,34 @@ function postStatus(body) {
 	});
 }
 
-function startWorker() {
+function startWorker(options = {}) {
+	const listenPort = options.port ?? port;
+	const inspectorPort = options.inspectorPort ?? 8892;
 	const persist = fs.mkdtempSync(path.join(os.tmpdir(), "chief-status-"));
 	const bin = path.join(workerDir, "node_modules", ".bin", "wrangler");
-	const child = spawn(
-		bin,
-		[
-			"dev",
-			"--ip",
-			"127.0.0.1",
-			"--port",
-			String(port),
-			"--inspector-port",
-			"8892",
-			"--local",
-			"--persist-to",
-			persist,
-			"--show-interactive-dev-session=false",
-			"--log-level",
-			"warn",
-		],
-		{
-			cwd: workerDir,
-			env: { ...process.env, CI: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
+	const args = [
+		"dev",
+		"--ip",
+		"127.0.0.1",
+		"--port",
+		String(listenPort),
+		"--inspector-port",
+		String(inspectorPort),
+		"--local",
+		"--persist-to",
+		persist,
+		"--show-interactive-dev-session=false",
+		"--log-level",
+		"warn",
+	];
+	if (options.readToken) {
+		args.push("--var", `READ_TOKEN:${options.readToken}`);
+	}
+	const child = spawn(bin, args, {
+		cwd: workerDir,
+		env: { ...process.env, CI: "1" },
+		stdio: ["ignore", "pipe", "pipe"],
+	});
 
 	let log = "";
 	let exited = false;
@@ -85,7 +87,7 @@ function startWorker() {
 		while (Date.now() < deadline) {
 			if (exited) throw new Error(`wrangler exited before it was ready\n${log}`);
 			try {
-				const response = await fetch(`http://127.0.0.1:${port}/`);
+				const response = await fetch(`http://127.0.0.1:${listenPort}/`);
 				if (response.status > 0) return;
 			} catch {
 				// not listening yet
@@ -115,6 +117,128 @@ function startWorker() {
 		},
 		log: () => log,
 	};
+}
+
+function emptyBody(body) {
+	return body === "";
+}
+
+async function liveSnapshot(url, headers) {
+	return new Promise((resolve, reject) => {
+		const ws = headers ? new WebSocket(url, { headers }) : new WebSocket(url);
+		const messages = [];
+		const timer = setTimeout(() => {
+			ws.close();
+			reject(new Error(`websocket timed out after ${messages.length} message(s)`));
+		}, 8000);
+		ws.addEventListener("error", () => {
+			clearTimeout(timer);
+			reject(new Error("websocket error"));
+		});
+		ws.addEventListener("message", (event) => {
+			messages.push(JSON.parse(String(event.data)));
+			if (messages.length >= 1) {
+				clearTimeout(timer);
+				ws.close();
+				resolve(messages);
+			}
+		});
+	});
+}
+
+async function liveRejected(url) {
+	return new Promise((resolve, reject) => {
+		const ws = new WebSocket(url);
+		let settled = false;
+		const finish = (ok, error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			try {
+				ws.close();
+			} catch {
+				// already closed
+			}
+			if (ok) resolve();
+			else reject(error);
+		};
+		const timer = setTimeout(() => finish(false, new Error("unauthorized websocket stayed open")), 4000);
+		ws.addEventListener("message", () => finish(false, new Error("unauthorized websocket received a message")));
+		ws.addEventListener("error", () => finish(true));
+		ws.addEventListener("close", () => finish(true));
+	});
+}
+
+/** A second worker with READ_TOKEN set. The first worker leaves the secret unset. */
+async function runReadTokenTests() {
+	const readToken = "test-read-chief";
+	const listenPort = 8893;
+	const worker = startWorker({ port: listenPort, inspectorPort: 8894, readToken });
+	const base = `http://127.0.0.1:${listenPort}`;
+	try {
+		await worker.ready;
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		const root = await request(`${base}/`);
+		assert(root.status === 200, `GET / stays open when a read token is set, was ${root.status}`);
+
+		const missing = await request(`${base}/status`);
+		assert(missing.status === 401, `GET /status without a read token ${missing.status}`);
+		assert(emptyBody(missing.body), `GET /status without a read token should have an empty body, was ${JSON.stringify(missing.body)}`);
+
+		const wrong = await request(`${base}/status`, { headers: { Authorization: "Bearer wrong-token" } });
+		assert(wrong.status === 401, `GET /status with the wrong read token ${wrong.status}`);
+		assert(emptyBody(wrong.body), "wrong read token should have an empty body");
+
+		const postPassword = await request(`${base}/status`, { headers: { Authorization: `Bearer ${token}` } });
+		assert(postPassword.status === 401, `the post password must not count as the read token, was ${postPassword.status}`);
+		assert(emptyBody(postPassword.body), "refusing the post password should have an empty body");
+
+		const liveMissing = await request(`${base}/status/live`);
+		assert(liveMissing.status === 401, `GET /status/live without a read token ${liveMissing.status}`);
+		assert(emptyBody(liveMissing.body), "live feed without a read token should have an empty body");
+		await liveRejected(`${base.replace("http", "ws")}/status/live`);
+
+		const opened = await request(`${base}/status`, { headers: { Authorization: `Bearer ${readToken}` } });
+		assert(opened.status === 200, `GET /status with the read token ${opened.status} ${JSON.stringify(opened.body)}`);
+		assert(Array.isArray(opened.body.bots), "the read token should get the bot list");
+
+		const posted = await request(`${base}/status`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ bot: "Reader", status: "working", task: "behind the token" }),
+		});
+		assert(posted.status === 200, `POST still uses the post password, was ${posted.status} ${JSON.stringify(posted.body)}`);
+
+		const afterPost = await request(`${base}/status`, { headers: { Authorization: `Bearer ${readToken}` } });
+		assert(
+			afterPost.body.bots.some((bot) => bot.bot === "Reader" && bot.status === "working"),
+			"the read token should see the post",
+		);
+
+		const live = await liveSnapshot(`${base.replace("http", "ws")}/status/live`, {
+			Authorization: `Bearer ${readToken}`,
+		});
+		assert(live[0].type === "snapshot", "an authorized live feed should send a snapshot");
+		assert(
+			live[0].bots.some((bot) => bot.bot === "Reader"),
+			"the authorized snapshot should include the posted bot",
+		);
+
+		const byQuery = await liveSnapshot(`${base.replace("http", "ws")}/status/live?token=${readToken}`);
+		assert(byQuery[0].type === "snapshot", "the live feed should also accept ?token=<read token>");
+		await liveRejected(`${base.replace("http", "ws")}/status/live?token=wrong-token`);
+		const queryOnGet = await request(`${base}/status?token=${readToken}`);
+		assert(queryOnGet.status === 401, `?token= is only for the live feed, GET /status was ${queryOnGet.status}`);
+
+		const upgrade = await request(`${base}/status/live`, { headers: { Authorization: `Bearer ${readToken}` } });
+		assert(upgrade.status === 426, `authorized live feed without an upgrade should stay 426, was ${upgrade.status}`);
+	} finally {
+		await worker.stop();
+	}
 }
 
 async function main() {
@@ -572,6 +696,8 @@ async function main() {
 		assert(deleteRoot.status === 405, `DELETE /status should be 405, was ${deleteRoot.status}`);
 		const liveStill = await request(`${base}/status/live`);
 		assert(liveStill.status === 426, `GET /status/live without upgrade should stay 426, was ${liveStill.status}`);
+
+		await runReadTokenTests();
 
 		for (let i = 0; i < 201; i += 1) {
 			const stamp = new Date(Date.UTC(2026, 9, 18, 0, 0, i)).toISOString();

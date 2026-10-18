@@ -109,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        model.commitReadToken()
         model.setPanelOpen(false)
         statusItem.button?.highlight(false)
     }

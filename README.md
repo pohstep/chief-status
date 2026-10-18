@@ -58,7 +58,7 @@ There are three parts:
 
 ## Download and install
 
-1. Download `Chief-Status-1.3.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest).
+1. Download `Chief-Status-1.3.1.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest).
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
    - **macOS 15 Sequoia or newer:** click **Done**. Open **System Settings → Privacy & Security**, scroll down to *"Chief Status was blocked…"*, click **Open Anyway**, and type your Mac password.
@@ -70,7 +70,7 @@ There are three parts:
 
 On a Mac with an Apple chip (M1 or newer), macOS may first ask to install **Rosetta**. Click **Install**. The app is built for Intel Macs, and Rosetta lets it run on Apple chips.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.3.0, maybe-stale bots](CHANGELOG.md#v130--2026-10-18).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.3.1, keep your feed private](CHANGELOG.md#v131--2026-10-18).
 
 ### Why does macOS warn me?
 
@@ -165,14 +165,40 @@ You need a free Cloudflare account and Node.js 20 or newer. If `npm install` is 
 
 6. **Paste that address into the app** (click the cube → **Settings**). Either the plain address or the same address ending in `/status` works.
 
+7. **Optional: lock the feed** so only your Mac can read it. See [Keep your feed private](#keep-your-feed-private). You can do this now or any time later.
+
 Keep the address and the password somewhere safe, like a password manager. Your bots need both.
 
 > [!NOTE]
-> Anyone who knows the address can **read** the bot names and their one-line task. Only someone with the password can **change** anything. So never put passwords or private details in a task line.
+> Unless you lock it, anyone who knows the address can **read** the bot names and their one-line task. Only someone with the password can **change** anything. So never put passwords or private details in a task line.
 
 To see the raw feed yourself, open `https://chief-status.<your-subdomain>.workers.dev/status` in a browser.
 
 To change the password later, run `npx wrangler secret put STATUS_TOKEN` again in the `worker` folder, then give every bot the new one.
+
+### Keep your feed private
+
+**Why:** by default, anyone who finds your feed address can read your bot names and what they're working on. A **read token** is a second password, just for reading. Once it's set, the feed shows nothing to anyone without it: they get an empty "401 Unauthorized" reply.
+
+1. **Make a token.** In Terminal, this prints a long random string. Copy it.
+
+   ```bash
+   openssl rand -hex 24
+   ```
+
+2. **Give it to the feed.** In the `worker` folder, run this and paste the token when asked. From then on, reading the feed needs the token.
+
+   ```bash
+   npx wrangler secret put READ_TOKEN
+   ```
+
+3. **Give the same token to the app.** Click the cube → **Settings**, paste it into **Read token (optional)**, and click **Save**. If the app says *"This feed is locked. Add its read token in Settings."*, the token is missing or doesn't match.
+
+**Your bots don't change.** Posting still uses the `STATUS_TOKEN` password, exactly as before. The read token is only for reading.
+
+To read a locked feed by hand: `curl -H "Authorization: Bearer <read token>" https://chief-status.<your-subdomain>.workers.dev/status`. The live feed (`/status/live`) takes the same header, or `?token=<read token>` on the address for tools that can't send headers.
+
+To unlock it again: `npx wrangler secret delete READ_TOKEN`. To change it, run `npx wrangler secret put READ_TOKEN` again and paste the new token into the app.
 
 ## Teach your bots to report
 
@@ -347,7 +373,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). No password: the app only reads the feed, so it never needs one |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice is kept in the app's preferences (`defaults read com.chiefstatus.menubar appearance`).
+The **Appearance** choice is kept in the app's preferences (`defaults read com.chiefstatus.menubar appearance`). So is the optional read token (key `readToken`). It stays in this app's private preferences, not the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update.
 
 What is stored in your feed, on your own Cloudflare account:
 
@@ -356,9 +382,10 @@ What is stored in your feed, on your own Cloudflare account:
 | The `bots` list | Each bot's name, current status, one-line task, start time, colour and optional chat link |
 | Today's finished jobs | Bot name, task line, start and end time, how long it took, and done or failed. Cleared every day at midnight in your `TZ`, and capped at 200 a day |
 | The `STATUS_TOKEN` password | Kept as a Cloudflare secret. It is not in any file in this repository |
+| The optional `READ_TOKEN` | Kept as a Cloudflare secret, only if you [lock the feed](#keep-your-feed-private) |
 | The old `STATUS` key-value storage | Only used once, to copy over a feed made with version 1.1 |
 
-None of this is in the repository, and nothing personal is built into the app or the `.dmg`. The feed can be read by anyone with its address, so keep task lines free of private details.
+None of this is in the repository, and nothing personal is built into the app or the `.dmg`. Unless you [lock it with a read token](#keep-your-feed-private), the feed can be read by anyone with its address, so keep task lines free of private details.
 
 ## Build it yourself
 
