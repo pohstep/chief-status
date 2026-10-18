@@ -95,6 +95,17 @@ export class StatusRoom extends DurableObject<Env> {
 		return { bot: row, snapshot };
 	}
 
+	/** Removes one bot and its jobs, then tells every live client. */
+	async remove(name: string): Promise<{ removed: boolean; jobs: number }> {
+		await this.ensureReady();
+		this.rollover();
+		if (!this.botRow(name)) return { removed: false, jobs: 0 };
+		const jobs = this.ctx.storage.sql.exec("DELETE FROM jobs WHERE bot = ?", name).rowsWritten;
+		this.ctx.storage.sql.exec("DELETE FROM bots WHERE name = ?", name);
+		this.broadcast(this.readSnapshot());
+		return { removed: true, jobs };
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
 			return new Response("Expected websocket", { status: 426 });

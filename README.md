@@ -17,19 +17,24 @@
 </p>
 
 <p align="center">
-  <img src="docs/hero.png" alt="The Chief Status panel open under the menu bar cube: two bots working, one failed, one done, and today's finished jobs">
+  <img src="docs/hero.png" alt="The Chief Status panel open under the menu bar cube: one bot working, one maybe stale in a black card with a 404 face, one failed, one done, and today's finished jobs">
 </p>
 
 ## What it does
 
-- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed.
+- **Shows status at a glance.** The cube in the menu bar is grey when every bot is idle, orange (and gently bobbing) while any bot is working, and red when one has failed. It turns indigo with a **?** when a bot is waiting on you, and black with **404** on it when the only working bots have gone quiet.
 - **One panel for the whole team.** Click the cube and a frosted panel drops down. Bots that are working get their own orange card, longest-running first. A failed bot gets a red row, a finished one a green check.
 - **Every bot has its own colour.** Each bot's face is filled with its own colour, so you can tell them apart in a second. The bot picks the colour itself the first time it reports (see [Colours](#colours)).
 - **Real job times.** Each card shows how long the job has been running. **Finished today** lists every job that finished today and how long it took.
 - **Live.** A change shows up within a second or two, with no refresh button.
-- **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure plays a sound and shows a macOS banner. It is off until you turn it on.
+- **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure is spoken aloud ("Chief task failed") and shows a macOS banner. It is off until you turn it on.
 - **Stale warning.** A bot that has said "working" for over an hour gets a **stale?** tag, which usually means it forgot to say it was done.
-- **Click to open the chat.** If a bot gives a link to its chat, clicking its row opens that chat.
+- **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes turns black with a **404** face and **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work.
+- **A bot waiting on you gets its own card.** A bot that posts `needs_input` (a question, an approval) gets an indigo card with a **?** face at the very top, labelled **needs you · 5m ago**. It never turns stale. The header counts it too.
+- **Click to open the chat.** If a bot gives a link to its chat, clicking its row opens that chat. You can also keep links on your Mac only, in `links.json` (see [Chat links on your Mac](#chat-links-on-your-mac)).
+- **Check on it, or Clear.** Every black maybe-stale card has two small buttons, always visible: **Check on it** opens that bot's chat. **Clear** hides the warning on this Mac only: the bot stays working, the card goes back to orange with **last update 36m ago**, and the warning comes back if it stays quiet another 30 minutes. Nothing is posted. Right-click a card for the same choices. The header counts quiet bots apart, like `1 working · 2 maybe stale`.
+- **Light, Dark or System.** **Settings → Appearance** picks the panel's look. System (the default) follows macOS. The choice is kept when you quit and reopen.
+- **Remove a bot you no longer use.** One command takes it off the feed, with its jobs for today (see [Remove a bot](#remove-a-bot)).
 - **Costs nothing to run.** The app uses no AI at all. The feed it reads runs on Cloudflare's free plan. Each bot sends one short line when a job starts and one when it ends.
 
 Chief Status is a small native Swift app. There is no Electron, no account, and no tracking.
@@ -53,7 +58,7 @@ There are three parts:
 
 ## Download and install
 
-1. Download `Chief-Status-1.2.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest).
+1. Download `Chief-Status-1.3.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest).
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
    - **macOS 15 Sequoia or newer:** click **Done**. Open **System Settings → Privacy & Security**, scroll down to *"Chief Status was blocked…"*, click **Open Anyway**, and type your Mac password.
@@ -65,7 +70,7 @@ There are three parts:
 
 On a Mac with an Apple chip (M1 or newer), macOS may first ask to install **Rosetta**. Click **Install**. The app is built for Intel Macs, and Rosetta lets it run on Apple chips.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.3.0, maybe-stale bots](CHANGELOG.md#v130--2026-10-18).
 
 ### Why does macOS warn me?
 
@@ -89,23 +94,28 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 
 | Do this | To get this |
 | --- | --- |
-| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed |
+| Look at the cube | Grey: all idle. Orange: someone is working. Red: someone failed. Indigo **?**: a bot needs you. Black **404**: the working bots have all gone quiet. A small black dot on the orange cube: one of them has |
 | Click the cube | Open or close the panel |
 | Click a bot's row | Open that bot's chat, if it sent a link |
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
-| Click **Settings** | Change the feed address, or turn **Alert when a bot fails** on or off |
+| Click **Settings** | Change the feed address, turn **Alert when a bot fails** on or off, or set **Appearance** to System, Light or Dark |
+| Click **Check on it** or **Clear** on a black **maybe stale** card | Open its chat, or hide the warning on this Mac for 30 minutes (nothing is posted). The rest of a black card does nothing when clicked |
+| **last update 36m ago** on an orange card | You cleared its warning. It is still working, as far as the feed knows |
 | Click **Quit**, or press `⌘Q` | Close the app |
 
 <p align="center">
-  <img src="docs/panel.png" width="328" alt="The panel up close">
+  <img src="docs/panel.png" width="328" alt="The panel up close: a fresh orange working card, a black maybe-stale card with a 404 face, and each row showing when that bot last posted">
 </p>
 
 How to read the panel:
 
 | You see | It means |
 | --- | --- |
+| An indigo card, **?** face and **needs you · 5m ago** | The bot is waiting on you, and has been for that long. It sits at the very top and never turns stale |
 | An orange card with a timer | The bot is working, and has been for that long |
+| A black card, **404** face and **maybe stale · 34m** | The bot said "working" but hasn't posted for 30 minutes or more. The task may be old. See [A bot shows maybe stale](#a-bot-shows-maybe-stale-or-an-old-task) |
 | **stale?** on a card | It has said "working" for over an hour. It probably forgot to say "done" |
+| `· 12m ago` at the end of a row | When that bot last posted. For done and failed, when the job ended |
 | A red row and **Failed** | The bot's last job failed |
 | A green check by the name | The bot finished its last job |
 | A plain row | The bot is idle |
@@ -189,6 +199,7 @@ Before each post, set:
 Start of job:   ./worker/scripts/post-status.sh Agent1 working "one short line about the job"
 Job finished:   ./worker/scripts/post-status.sh Agent1 done "what finished"
 Job failed:     ./worker/scripts/post-status.sh Agent1 failed "what broke"
+Waiting on me:  ./worker/scripts/post-status.sh Agent1 needs_input "the question you need answered"
 Then always:    ./worker/scripts/post-status.sh Agent1 idle ""
 
 If you hand work to a background helper or a cloud coding agent, post working for yourself while it runs, and done when it comes back.
@@ -226,7 +237,7 @@ Light faces (like white or yellow) get dark eyes and dark faces get light eyes, 
 - Avoid plain orange, red and green for bot colours. Those are the status colours, and the face would blend into its card.
 - To change a bot's colour, change it in the bot's instruction. Its next post updates the face.
 - To go back to the automatic colour, remove the colour from the bot's instruction and send one post with an empty colour, using the `curl` line in [docs/BOT-SETUP.md](docs/BOT-SETUP.md) with `"color":""`. The script on its own never clears a colour; leaving the colour out just keeps the saved one.
-- The menu bar cube itself always stays grey, orange or red. Bot colours only appear in the panel.
+- The menu bar cube shows status only: grey, orange, red, indigo or black. Bot colours only appear in the panel.
 
 ### Post a status by hand
 
@@ -238,7 +249,17 @@ export CHIEF_STATUS_TOKEN="the password from the deploy step"
 ./scripts/post-status.sh Agent1 working "drafting the homepage"
 ```
 
-The status can be `working`, `done`, `failed` or `idle`. Each bot has one current line, and a new post replaces it. A `done` or `failed` post is also added to today's **Finished today** list, with how long the job took since its `working` post.
+The status can be `working`, `done`, `failed`, `idle` or `needs_input`. `needs_input` means the bot is waiting on you; the script sends `started_at` with it, so the card counts from that post, and it does not add a job to **Finished today**. Each bot has one current line, and a new post replaces it. A `done` or `failed` post is also added to today's **Finished today** list, with how long the job took since its `working` post.
+
+### Remove a bot
+
+A test bot, or one you retired, stays on the feed until you remove it. From the `worker` folder, with the same two settings as above:
+
+```bash
+./scripts/delete-bot.sh Agent9
+```
+
+It removes the bot and its jobs for today, and every open panel updates at once. It needs the same password as posting. If that bot posts again, it comes back.
 
 ## A bot is working but not lighting up
 
@@ -273,7 +294,47 @@ Chief Status only shows what bots post. If a bot is busy but its face is not ora
 
 6. **Marked stale?** That is not a fault. A bot that has been `working` for over an hour (`STALE_MINUTES`) gets **stale?**, usually because it forgot to post `done`. Ask it to post `done`, then `idle`.
 
+7. **Black card, or an old task?** See the next section.
+
+8. **Waiting on you?** A bot that asked you something should post `needs_input`, not `working`. It then gets the indigo **needs you** card at the top instead of going black after 30 minutes. Answer it, and it posts `working` again.
+
+9. **Clicking a row does nothing.** That bot has no chat link. Add one with `CHIEF_STATUS_BOT_URL`, or in `links.json` (see [Chat links on your Mac](#chat-links-on-your-mac)). `javascript:`, `data:`, `file:` and `vbscript:` links are always ignored.
+
 Quick test that everything works end to end: post a `working` line by hand for any bot name. Its face should turn orange within a second or two. Then post `idle` to clear it.
+
+## A bot shows maybe stale or an old task
+
+A black card with a **404** face and **maybe stale · 34m** means that bot said `working` and then posted nothing for 30 minutes. It is a hint, not an error. Usually the bot moved on to a new job, or finished, without posting.
+
+- **It is on a new job.** Ask it to post the new task. The card goes back to its colour at once and the timer restarts:
+
+  ```bash
+  ./worker/scripts/post-status.sh Agent1 working "the new task"
+  ```
+
+- **It finished.** Ask it to post `done`, then `idle`.
+- **It really is still on one long job.** That's fine. The card stays black until the bot posts again. Bots that post at the start of every task, as in [Teach your bots to report](#teach-your-bots-to-report), rarely hit 30 minutes.
+- **It went back to its colour on its own and then black again?** The bot is posting without `started_at`. Use `post-status.sh`, which sends it on every `working` post. A raw `working` post without it keeps the old clock.
+
+- **Know it's fine?** Click **Clear** on the card. The warning is hidden on this Mac only; the bot still shows as working, with **last update 36m ago**. It comes back if the bot stays quiet for another 30 minutes. It resets when the bot posts again. **Check on it** opens the bot's chat.
+- **It really is idle?** Ask the bot to post `idle`, or post it by hand (see [Post a status by hand](#post-a-status-by-hand)).
+
+After an hour (`STALE_MINUTES`) the label changes to **stale?**. If `STALE_MINUTES` is set below 30, the black card starts one minute before it.
+
+## Chat links on your Mac
+
+A bot can send its own chat link (`CHIEF_STATUS_BOT_URL`), but that link is public to anyone with the feed address. To keep links private, put them in a file on your Mac instead:
+
+`~/Library/Application Support/Chief Status/links.json`
+
+```json
+{
+  "Agent1": "https://example.com/agent1",
+  "Agent2": "myapp://chat?id=REPLACE-WITH-YOUR-ID"
+}
+```
+
+A copy is in [docs/links.example.json](docs/links.example.json). The names must match the bot names exactly. Any link the Mac can open works, including app links like `myapp://…`. `javascript:`, `data:`, `file:` and `vbscript:` links are ignored. A link the bot sends in the feed wins over this file. The app reads the file each time it checks the feed, so there's no need to restart.
 
 ## Privacy
 
@@ -284,6 +345,9 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | File | What's in it |
 | --- | --- |
 | `config.plist` | Your feed address (`feedURL`), whether alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). No password: the app only reads the feed, so it never needs one |
+| `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
+
+The **Appearance** choice is kept in the app's preferences (`defaults read com.chiefstatus.menubar appearance`).
 
 What is stored in your feed, on your own Cloudflare account:
 
@@ -351,6 +415,7 @@ The feed's web addresses:
 | --- | --- |
 | `GET /status` | Everyone's current line, today's finished jobs, and the settings above. Public |
 | `POST /status` | Update one bot. Needs `Authorization: Bearer <STATUS_TOKEN>`. JSON body: `bot`, `status`, `task`, and optionally `started_at`, `color`, `url` |
+| `DELETE /status/<bot>` | Remove one bot and its jobs for today. Same password as `POST`. Answers `404` if there is no such bot. `scripts/delete-bot.sh` wraps it |
 | `GET /status/live` | The live WebSocket the app listens on. If it drops, the app checks the feed every ~15 seconds instead |
 
 Run the feed's tests, or try it on your own computer before deploying (copy `worker/.dev.vars.example` to `worker/.dev.vars` and put a test password in it first):

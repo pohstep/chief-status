@@ -10,11 +10,20 @@ struct Bot: Decodable, Identifiable {
     let startedAt: String
     let url: String?
     let color: String?
+    /// From the local links.json. Used only when the feed has no url for this bot.
+    var localURL: String?
+    /// Set by Clear on this Mac: the maybe-stale warning is hidden until then, unless the bot posts again first.
+    var quietUntil: Date?
+
+    func isQuieted(now: Date) -> Bool {
+        guard let until = quietUntil else { return false }
+        return now < until
+    }
 
     var id: String { bot }
 
     var openURL: URL? {
-        guard let url = url, let parsed = URL(string: url), let scheme = parsed.scheme, !scheme.isEmpty else {
+        guard let url = url ?? localURL, let parsed = URL(string: url), let scheme = parsed.scheme, !scheme.isEmpty else {
             return nil
         }
         let blocked = ["javascript", "data", "file", "vbscript"]
@@ -25,6 +34,30 @@ struct Bot: Decodable, Identifiable {
     func isStale(now: Date, afterMinutes: Int) -> Bool {
         guard status == "working", let start = ISODate.date(from: startedAt) else { return false }
         return now.timeIntervalSince(start) >= Double(afterMinutes) * 60
+    }
+
+    /// A working bot with no new post for StaleRule.fadeAfterMinutes. Re-posting working resets started_at, so this clears at once.
+    func isFaded(now: Date, staleAfterMinutes: Int) -> Bool {
+        if isQuieted(now: now) { return false }
+        return isStale(now: now, afterMinutes: StaleRule.fadeMinutes(staleAfterMinutes: staleAfterMinutes))
+    }
+
+    /// When this bot last posted. Done and failed use the newest ended_at for it in today's list,
+    /// because started_at keeps the working start. Anything else, or no entry today, uses started_at.
+    func lastPostDate(today: [FinishedJob]) -> Date? {
+        if status == "done" || status == "failed" {
+            var newest: Date?
+            for job in today where job.bot == bot {
+                guard let ended = ISODate.date(from: job.endedAt) else { continue }
+                if newest == nil || ended > newest! {
+                    newest = ended
+                }
+            }
+            if let newest = newest {
+                return newest
+            }
+        }
+        return ISODate.date(from: startedAt)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -153,8 +186,18 @@ final class StatusModel: ObservableObject {
     @Published var today: [FinishedJob] = []
     @Published var todayExpanded = true
     @Published var staleAfterMinutes = 60
+    @Published var appearance: AppearanceChoice = .system
+
+    /// What the feed sent. `bots` is this plus local links and local Clear.
+    private var feedBots: [Bot] = []
+    private var links: [String: String] = [:]
+    /// Bot name → its started_at when Clear was clicked, and when. Memory only.
+    /// A new started_at drops the entry; so does another fade window (30 min) after the click.
+    private var cleared: [String: (startedAt: String, at: Date)] = [:]
 
     var onChange: (() -> Void)?
+    /// Every second. The menu bar uses it so a bot can turn stale without a new post.
+    var onTick: (() -> Void)?
 
     private var poll: Timer?
     private var tick: Timer?
@@ -198,12 +241,15 @@ final class StatusModel: ObservableObject {
         ConfigStore.ensureDirectory()
         alertOnFailure = ConfigStore.readAlert()
         todayExpanded = ConfigStore.readTodayExpanded()
+        appearance = AppearanceChoice.stored()
+        links = ConfigStore.readLinks()
         refresh()
         connectLive()
         reschedulePoll()
 
         let tick = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             self?.now = Date()
+            self?.onTick?()
         }
         tick.tolerance = 0.2
         RunLoop.main.add(tick, forMode: .common)
@@ -265,9 +311,46 @@ final class StatusModel: ObservableObject {
             DispatchQueue.main.async {
                 self.alertOnFailure = true
                 ConfigStore.setAlert(true)
-                self.alertNote = granted ? nil : "Banners are off in System Settings. Chief Status will still play a sound."
+                self.alertNote = granted ? nil : "Banners are off in System Settings. Chief Status will still speak the alert."
                 self.notify()
             }
+        }
+    }
+
+    func setAppearance(_ choice: AppearanceChoice) {
+        appearance = choice
+        choice.store()
+        choice.apply()
+        notify()
+    }
+
+    /// "Clear" on a maybe-stale card. Local only, nothing is posted: the bot stays working and the
+    /// 404 warning is hidden for another fade window, or until the bot posts again and later goes quiet.
+    func clearLocally(_ bot: Bot) {
+        cleared[bot.bot] = (startedAt: bot.startedAt, at: Date())
+        rebuildBots()
+        notify()
+    }
+
+    /// For --render-preview only.
+    func setSampleBots(_ sample: [Bot]) {
+        feedBots = sample
+        rebuildBots()
+    }
+
+    private func rebuildBots() {
+        let window = Double(StaleRule.fadeMinutes(staleAfterMinutes: staleAfterMinutes)) * 60
+        cleared = cleared.filter { name, entry in
+            Date().timeIntervalSince(entry.at) < window
+                && feedBots.contains { $0.bot == name && $0.startedAt == entry.startedAt && $0.status == "working" }
+        }
+        bots = feedBots.map { source in
+            var bot = source
+            if let entry = cleared[source.bot] {
+                bot.quietUntil = entry.at.addingTimeInterval(window)
+            }
+            bot.localURL = links[source.bot]
+            return bot
         }
     }
 
@@ -281,6 +364,7 @@ final class StatusModel: ObservableObject {
         ConfigStore.ensureDirectory()
         let raw = ConfigStore.readFeedURL() ?? ""
         feedURL = raw
+        links = ConfigStore.readLinks()
 
         guard !ConfigStore.needsSetup(raw) else {
             task?.cancel()
@@ -347,7 +431,8 @@ final class StatusModel: ObservableObject {
 
     private func applyFeed(_ decoded: FeedResponse) {
         noteTransitions(decoded.bots)
-        bots = decoded.bots
+        feedBots = decoded.bots
+        rebuildBots()
         today = decoded.today
         if decoded.staleAfterMinutes > 0 {
             staleAfterMinutes = decoded.staleAfterMinutes
@@ -517,13 +602,13 @@ final class StatusModel: ObservableObject {
 
 private enum AlertCenter {
     static func request(_ done: @escaping (Bool) -> Void) {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
             done(granted)
         }
     }
 
     static func announce(_ bots: [Bot]) {
-        NSSound(named: NSSound.Name("Funk"))?.play()
+        FailureSpeaker.shared.speak(bots.map(\.bot))
         let content = UNMutableNotificationContent()
         content.title = "An agent failed"
         if bots.count == 1 {
@@ -532,9 +617,46 @@ private enum AlertCenter {
         } else {
             content.body = "\(bots.map(\.bot).joined(separator: ", ")) failed"
         }
-        content.sound = .default
+        content.sound = nil
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+}
+
+/// Speaks "<Bot> task failed" with the system voice (the same one `say` uses).
+/// Several failures at once are queued and spoken one after another.
+final class FailureSpeaker: NSObject, NSSpeechSynthesizerDelegate {
+    static let shared = FailureSpeaker()
+
+    private let synth = NSSpeechSynthesizer()
+    private var queue: [String] = []
+    private var speaking = false
+
+    private override init() {
+        super.init()
+        synth.delegate = self
+    }
+
+    func speak(_ names: [String]) {
+        for name in names where !queue.contains(name) {
+            queue.append(name)
+        }
+        next()
+    }
+
+    private func next() {
+        guard !speaking, !queue.isEmpty else { return }
+        let name = queue.removeFirst()
+        let phrase = "\(name) task failed"
+        speaking = synth.startSpeaking(phrase)
+        NSLog("ChiefStatus spoken alert start: \"%@\" (started: %@)", phrase, speaking ? "yes" : "no")
+        if !speaking { next() }
+    }
+
+    func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
+        NSLog("ChiefStatus spoken alert finished (completed: %@)", finishedSpeaking ? "yes" : "no")
+        speaking = false
+        next()
     }
 }
 

@@ -1,4 +1,4 @@
-import { parsePost } from "./parse";
+import { parseBot, parsePost } from "./parse";
 import { StatusRoom } from "./status-room";
 
 export { StatusRoom };
@@ -34,6 +34,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
 		);
 	}
 
+	if (request.method === "DELETE" && path.startsWith("/status/")) {
+		return deleteBot(request, env, path.slice("/status/".length));
+	}
+
 	if (path === "/status/live") {
 		return live(request, env);
 	}
@@ -52,6 +56,38 @@ async function handle(request: Request, env: Env): Promise<Response> {
 	}
 
 	return json({ error: "method not allowed" }, 405, { Allow: "GET, POST" });
+}
+
+/** Admin: DELETE /status/<bot> removes the bot and its jobs. Same password as POST. */
+async function deleteBot(request: Request, env: Env, rawName: string): Promise<Response> {
+	if (!env.STATUS_TOKEN) {
+		console.error(JSON.stringify({ event: "missing_secret" }));
+		return json({ error: "server is missing STATUS_TOKEN" }, 500);
+	}
+
+	if (!(await authorized(request, env.STATUS_TOKEN))) {
+		return json({ error: "unauthorized" }, 401);
+	}
+
+	let decoded: string;
+	try {
+		decoded = decodeURIComponent(rawName);
+	} catch {
+		return json({ error: "bad bot name" }, 400);
+	}
+	const name = parseBot(decoded);
+	if (!name) {
+		return json({ error: "bad bot name" }, 400);
+	}
+
+	const result = await env.ROOM.getByName("feed").remove(name);
+	if (!result.removed) {
+		return json({ error: "no such bot" }, 404);
+	}
+
+	console.log(JSON.stringify({ event: "status_delete", bot: name, jobs: result.jobs }));
+
+	return json({ ok: true, deleted: name, jobs_removed: result.jobs });
 }
 
 async function live(request: Request, env: Env): Promise<Response> {

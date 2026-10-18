@@ -15,6 +15,28 @@ enum ConfigStore {
         fileURL.path
     }
 
+    /// Optional chat links, kept on this Mac only: {"Agent1": "https://example.com/agent1"}.
+    /// A url sent by the bot in the feed wins over this file.
+    static var linksURL: URL {
+        directory.appendingPathComponent("links.json")
+    }
+
+    static func readLinks() -> [String: String] {
+        guard let data = try? Data(contentsOf: linksURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        var links: [String: String] = [:]
+        for (name, value) in object {
+            guard let text = value as? String else { continue }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                links[name] = trimmed
+            }
+        }
+        return links
+    }
+
     static func ensureDirectory() {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
@@ -120,5 +142,57 @@ enum ConfigStore {
             url += "/status"
         }
         return url
+    }
+}
+
+/// Settings → Appearance. Stored in UserDefaults (com.chiefstatus.menubar, key "appearance").
+enum AppearanceChoice: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    static let defaultsKey = "appearance"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+
+    static func stored() -> AppearanceChoice {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        return AppearanceChoice(rawValue: raw) ?? .system
+    }
+
+    func store() {
+        UserDefaults.standard.set(rawValue, forKey: AppearanceChoice.defaultsKey)
+    }
+
+    /// The popover and its frosted materials follow the app's appearance.
+    func apply() {
+        NSApp.appearance = nsAppearance
+    }
+}
+
+/// When a working bot starts to look stale. The worker's STALE_MINUTES (default 60) is the second step.
+enum StaleRule {
+    /// No new post for this long turns a working card black with a 404 face and "maybe stale".
+    static let fadeAfterMinutes = 30
+
+    /// The fade always comes before "stale?". If STALE_MINUTES is set lower than 30, the fade moves to one minute before it.
+    static func fadeMinutes(staleAfterMinutes: Int) -> Int {
+        max(1, min(fadeAfterMinutes, staleAfterMinutes - 1))
     }
 }

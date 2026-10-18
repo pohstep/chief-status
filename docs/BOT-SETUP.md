@@ -40,7 +40,9 @@ Use working, done, failed, or idle. The task is one line. Do not put secrets in 
 Do not send a start time on done, failed, or idle. The feed keeps the time from the working post, and that is the duration in the panel.
 ```
 
-The script is `worker/scripts/post-status.sh`. It is plain `sh` plus `curl`, so it runs on a Mac or Linux. It sends `started_at` only for `working`. It sends `CHIEF_STATUS_BOT_COLOR` and `CHIEF_STATUS_BOT_URL` when those are set.
+The script is `worker/scripts/post-status.sh`. It is plain `sh` plus `curl`, so it runs on a Mac or Linux. It sends `started_at` only for `working` and `needs_input`. Post `needs_input` when you are waiting on your person (a question or an approval), and `working` again once they answer. It sends `CHIEF_STATUS_BOT_COLOR` and `CHIEF_STATUS_BOT_URL` when those are set.
+
+To take a bot off the feed (a test bot, or one you retired), run `worker/scripts/delete-bot.sh BOT` with the same `CHIEF_STATUS_URL` and `CHIEF_STATUS_TOKEN`. It calls `DELETE /status/<bot>` and removes that bot and its jobs for today.
 
 The same post, as one curl line:
 

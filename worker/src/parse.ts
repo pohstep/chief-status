@@ -1,4 +1,5 @@
-export const STATUSES = ["idle", "working", "failed", "done"] as const;
+/** needs_input: the bot is waiting on its person. It is not a finish, so it records no job. */
+export const STATUSES = ["idle", "working", "failed", "done", "needs_input"] as const;
 export const BOT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._'’-]{0,39}$/u;
 const JOB_RESULTS = ["done", "failed"] as const;
 
@@ -67,7 +68,7 @@ export function parsePost(
 	}
 
 	if (typeof body.status !== "string" || !isStatus(body.status)) {
-		return { ok: false, error: "status must be idle, working, failed, or done" };
+		return { ok: false, error: "status must be idle, working, failed, done, or needs_input" };
 	}
 
 	if (typeof body.task !== "string") {

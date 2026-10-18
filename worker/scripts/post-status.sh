@@ -7,17 +7,19 @@
 #   export CHIEF_STATUS_BOT_COLOR="#3B82F6"                    # optional #RRGGBB
 #   ./post-status.sh Agent1 working "drafting the homepage"
 #
-# started_at is sent only for "working". done, failed and idle let the feed keep
-# the clock from the working post, which is what today's durations are based on.
+# started_at is sent for "working" and "needs_input", so the clock starts at this post.
+# done, failed and idle let the feed keep the clock from the working post, which is
+# what today's durations are based on.
 #
-# STATUS is one of: idle, working, failed, done
+# STATUS is one of: idle, working, failed, done, needs_input
+#   needs_input means the bot is waiting on you (a question, an approval).
 # The address can be the worker root or the full /status address.
 
 set -eu
 
 if [ "$#" -lt 3 ]; then
 	echo "Usage: post-status.sh BOT STATUS TASK" >&2
-	echo "  STATUS is idle, working, failed, or done" >&2
+	echo "  STATUS is idle, working, failed, done, or needs_input" >&2
 	echo "  Set CHIEF_STATUS_URL and CHIEF_STATUS_TOKEN first." >&2
 	exit 1
 fi
@@ -28,9 +30,9 @@ shift 2
 TASK=$*
 
 case "$STATUS" in
-idle | working | failed | done) ;;
+idle | working | failed | done | needs_input) ;;
 *)
-	echo "Status must be idle, working, failed, or done." >&2
+	echo "Status must be idle, working, failed, done, or needs_input." >&2
 	exit 1
 	;;
 esac
@@ -57,7 +59,7 @@ escape() {
 }
 
 started_field=""
-if [ "$STATUS" = "working" ]; then
+if [ "$STATUS" = "working" ] || [ "$STATUS" = "needs_input" ]; then
 	started_field=$(printf ',"started_at":"%s"' "$STARTED")
 fi
 url_field=""

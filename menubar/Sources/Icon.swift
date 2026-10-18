@@ -8,32 +8,71 @@ enum ChiefPalette {
     static let red = NSColor(srgbRed: 229.0 / 255.0, green: 72.0 / 255.0, blue: 77.0 / 255.0, alpha: 1)
     static let eyeOnRed = NSColor(srgbRed: 42.0 / 255.0, green: 16.0 / 255.0, blue: 18.0 / 255.0, alpha: 1)
     static let done = NSColor(srgbRed: 46.0 / 255.0, green: 184.0 / 255.0, blue: 102.0 / 255.0, alpha: 1)
+    /// Maybe stale: a lost-signal black. The light rim keeps it visible on a dark menu bar.
+    static let black = NSColor(srgbRed: 17.0 / 255.0, green: 17.0 / 255.0, blue: 19.0 / 255.0, alpha: 1)
+    static let blackRim = NSColor(white: 1, alpha: 0.55)
+    static let blackInk = NSColor(white: 1, alpha: 1)
+    /// Needs input: indigo #4F5BE8, hue 235°, at least 19° from every bot colour in the feed.
+    static let indigo = NSColor(srgbRed: 79.0 / 255.0, green: 91.0 / 255.0, blue: 232.0 / 255.0, alpha: 1)
 }
 
 enum BarTone: Equatable {
     case grey
     case orange
     case red
+    /// Every working bot has gone 30+ min without a post.
+    case black
+    /// A bot is waiting on you.
+    case indigo
+}
+
+/// What the menu bar cube shows, in priority order:
+/// any failed → red. Else any bot needs input → indigo "?" cube. Else any working bot that posted in the last 30 min → orange,
+/// plus a small black dot if another working bot is stale. Else any stale working bot → black 404 cube.
+/// Else grey (idle or finished).
+struct BarState: Equatable {
+    var tone: BarTone
+    var staleDot: Bool = false
+    var staleCount: Int = 0
+    var needsCount: Int = 0
 
     var toolTip: String {
-        switch self {
-        case .grey:
-            return "Chief Status — idle"
-        case .orange:
-            return "Chief Status — working"
+        switch tone {
         case .red:
             return "Chief Status — an agent failed"
+        case .indigo:
+            return needsCount == 1 ? "Chief Status — a bot needs you" : "Chief Status — \(needsCount) bots need you"
+        case .orange:
+            if staleDot {
+                return "Chief Status — working · \(staleCount) maybe stale (no update for 30+ min)"
+            }
+            return "Chief Status — working"
+        case .black:
+            return staleCount == 1
+                ? "Chief Status — maybe stale: the working bot hasn't posted for 30+ min"
+                : "Chief Status — maybe stale: \(staleCount) working bots haven't posted for 30+ min"
+        case .grey:
+            return "Chief Status — idle"
         }
     }
 
-    static func from(bots: [Bot]) -> BarTone {
+    static func from(bots: [Bot], now: Date, staleAfterMinutes: Int) -> BarState {
         if bots.contains(where: { $0.status == "failed" }) {
-            return .red
+            return BarState(tone: .red)
         }
-        if bots.contains(where: { $0.status == "working" }) {
-            return .orange
+        let needs = bots.filter { $0.status == "needs_input" }.count
+        if needs > 0 {
+            return BarState(tone: .indigo, needsCount: needs)
         }
-        return .grey
+        let working = bots.filter { $0.status == "working" }
+        let stale = working.filter { $0.isFaded(now: now, staleAfterMinutes: staleAfterMinutes) }.count
+        if working.count > stale {
+            return BarState(tone: .orange, staleDot: stale > 0, staleCount: stale)
+        }
+        if stale > 0 {
+            return BarState(tone: .black, staleCount: stale)
+        }
+        return BarState(tone: .grey)
     }
 }
 
@@ -62,6 +101,7 @@ final class FaceAnimator {
     var onImage: ((NSImage) -> Void)?
 
     private var tone: BarTone = .grey
+    private var staleDot = false
     private var hasTone = false
     private var timer: Timer?
     private var clock: Clock = .stopped
@@ -84,6 +124,11 @@ final class FaceAnimator {
         case stopped
         case frames(TimeInterval)
         case waiting
+    }
+
+    func setState(_ state: BarState) {
+        staleDot = state.staleDot
+        setTone(state.tone)
     }
 
     func setTone(_ tone: BarTone) {
@@ -110,6 +155,8 @@ final class FaceAnimator {
         case .red:
             shakeOn = true
             shakeStart = now
+        case .black, .indigo:
+            break
         }
     }
 
@@ -144,6 +191,8 @@ final class FaceAnimator {
             if shakeOn, now >= shakeStart + 0.4 {
                 shakeOn = false
             }
+        case .black, .indigo:
+            break
         }
     }
 
@@ -177,7 +226,7 @@ final class FaceAnimator {
             shakeOn: shakeOn,
             shakeStart: shakeStart
         )
-        onImage?(StatusIcon.image(tone: tone, pose: pose))
+        onImage?(StatusIcon.image(tone: tone, pose: pose, staleDot: staleDot))
     }
 
     private func desiredClock() -> Clock {
@@ -188,6 +237,8 @@ final class FaceAnimator {
             return blinkOn ? .frames(1.0 / 20.0) : .waiting
         case .red:
             return shakeOn ? .frames(1.0 / 20.0) : .stopped
+        case .black, .indigo:
+            return .stopped
         }
     }
 
@@ -240,6 +291,8 @@ enum FaceMotion {
             return greyPose(time: time, blinkOn: blinkOn, blinkStart: blinkStart, blinkDuration: blinkDuration)
         case .red:
             return redPose(time: time, shakeOn: shakeOn, shakeStart: shakeStart)
+        case .black, .indigo:
+            return IconPose()
         }
     }
 
@@ -318,10 +371,24 @@ enum FaceMotion {
 enum StatusIcon {
     static let pointSize: CGFloat = 18
 
-    static func image(tone: BarTone, pose: IconPose) -> NSImage {
+    static func image(tone: BarTone, pose: IconPose, staleDot: Bool = false) -> NSImage {
         let fill: NSColor
         let eye: NSColor
         switch tone {
+        case .black:
+            let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
+                paintMark("404", fill: ChiefPalette.black, rim: ChiefPalette.blackRim, size: 7.5)
+                return true
+            }
+            image.isTemplate = false
+            return image
+        case .indigo:
+            let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
+                paintMark("?", fill: ChiefPalette.indigo, rim: NSColor(white: 1, alpha: 0.35), size: 12)
+                return true
+            }
+            image.isTemplate = false
+            return image
         case .orange:
             fill = ChiefPalette.orange
             eye = ChiefPalette.eye
@@ -336,6 +403,9 @@ enum StatusIcon {
         let pose = pose
         let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
             paint(fill: fill, eye: eye, pose: pose)
+            if staleDot {
+                paintStaleDot()
+            }
             return true
         }
         image.isTemplate = false
@@ -378,6 +448,44 @@ enum StatusIcon {
         NSBezierPath(ovalIn: NSRect(x: leftX, y: eyeY, width: eyeWidth, height: height)).fill()
         let rightX = leftX + eyeWidth + gap
         NSBezierPath(ovalIn: NSRect(x: rightX, y: eyeY, width: eyeWidth, height: height)).fill()
+    }
+
+    /// Black 404 cube or indigo "?" cube: same 16pt face, a light rim so it shows on a dark menu bar,
+    /// and the mark where the eyes go.
+    private static func paintMark(_ mark: String, fill: NSColor, rim: NSColor, size fontSize: CGFloat) {
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        if let graphics = NSGraphicsContext.current {
+            graphics.shouldAntialias = true
+        }
+        let face = NSRect(x: 1, y: 1, width: 16, height: 16)
+        let shape = NSBezierPath(roundedRect: face.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.6, yRadius: 4.6)
+        fill.setFill()
+        shape.fill()
+        rim.setStroke()
+        shape.lineWidth = 1
+        shape.stroke()
+
+        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .heavy)
+        let text = NSAttributedString(string: mark, attributes: [
+            .font: font,
+            .foregroundColor: ChiefPalette.blackInk,
+            .kern: -0.2,
+        ])
+        let size = text.size()
+        text.draw(at: NSPoint(x: 9 - size.width / 2, y: 9 - size.height / 2 + 0.2))
+    }
+
+    /// Small black dot with a light rim, bottom right: working, but another working bot is stale.
+    private static func paintStaleDot() {
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let dot = NSRect(x: 11.6, y: 0.4, width: 6, height: 6)
+        let ring = NSBezierPath(ovalIn: dot)
+        NSColor.white.setFill()
+        ring.fill()
+        ChiefPalette.black.setFill()
+        NSBezierPath(ovalIn: dot.insetBy(dx: 1.1, dy: 1.1)).fill()
     }
 
     /// Scale so a rotated or squashed face stays inside the 18pt square.

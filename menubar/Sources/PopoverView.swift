@@ -21,7 +21,7 @@ enum Metrics {
     static func scrollContentHeight(for model: StatusModel) -> CGFloat {
         switch model.mode {
         case .setup:
-            return 236
+            return 272
         case .checking:
             return 48
         case .message:
@@ -33,9 +33,17 @@ enum Metrics {
 
     /// Working cards, the team card, and Finished today. Matches the 518 pt example.
     static func listHeight(for model: StatusModel) -> CGFloat {
+        let needs = model.bots.filter { $0.status == "needs_input" }
         let working = model.bots.filter { $0.status == "working" }
-        let team = model.bots.filter { $0.status != "working" }
+        let team = model.bots.filter { $0.status != "working" && $0.status != "needs_input" }
         var height: CGFloat = 0
+        if !needs.isEmpty {
+            height += 24
+            height += CGFloat(needs.count) * 46
+            if needs.count > 1 {
+                height += CGFloat(needs.count - 1) * 6
+            }
+        }
         if !working.isEmpty {
             height += 24
             height += CGFloat(working.count) * 46
@@ -100,20 +108,35 @@ struct StatusPopoverView: View {
     }
 
     private var summary: some View {
-        let working = model.bots.filter { $0.status == "working" }.count
+        let needs = model.bots.filter { $0.status == "needs_input" }.count
+        let allWorking = model.bots.filter { $0.status == "working" }
+        let stale = allWorking.filter { $0.isFaded(now: model.now, staleAfterMinutes: model.staleAfterMinutes) }.count
+        let working = allWorking.count - stale
         let failed = model.bots.filter { $0.status == "failed" }.count
         let doneToday = model.today.filter { $0.result == "done" }.count
         return Group {
-            if working == 0 && failed == 0 && doneToday == 0 {
+            if needs == 0 && working == 0 && stale == 0 && failed == 0 && doneToday == 0 {
                 Text("All idle")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PanelTheme.ink2)
             } else {
                 HStack(spacing: 6) {
+                    if needs > 0 {
+                        summaryPart(count: needs, word: needs == 1 ? "needs you" : "need you", color: PanelTheme.indigo)
+                    }
+                    if needs > 0 && (working > 0 || stale > 0 || failed > 0 || doneToday > 0) {
+                        summaryDot
+                    }
                     if working > 0 {
                         summaryPart(count: working, word: "working", color: PanelTheme.orange)
                     }
-                    if working > 0 && (failed > 0 || doneToday > 0) {
+                    if working > 0 && (stale > 0 || failed > 0 || doneToday > 0) {
+                        summaryDot
+                    }
+                    if stale > 0 {
+                        summaryPart(count: stale, word: "maybe stale", color: Color(nsColor: PanelTheme.lostFace), rim: true)
+                    }
+                    if stale > 0 && (failed > 0 || doneToday > 0) {
                         summaryDot
                     }
                     if failed > 0 {
@@ -126,6 +149,8 @@ struct StatusPopoverView: View {
                         summaryPart(count: doneToday, word: "done today", color: PanelTheme.done)
                     }
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             }
         }
     }
@@ -136,10 +161,11 @@ struct StatusPopoverView: View {
             .foregroundStyle(PanelTheme.ink2)
     }
 
-    private func summaryPart(count: Int, word: String, color: Color) -> some View {
+    private func summaryPart(count: Int, word: String, color: Color, rim: Bool = false) -> some View {
         HStack(spacing: 4) {
             Circle()
                 .fill(color)
+                .overlay(Circle().strokeBorder(Color.white.opacity(rim ? 0.6 : 0), lineWidth: 1))
                 .frame(width: 6, height: 6)
             Text("\(count) \(word)")
                 .font(.system(size: 11, weight: .medium))
@@ -183,9 +209,27 @@ struct StatusPopoverView: View {
         )
     }
 
+    /// Fresh cards first, longest-running first. Maybe-stale cards drop below them.
     private var workingBots: [Bot] {
-        model.bots
+        let now = model.now
+        let staleAfter = model.staleAfterMinutes
+        return model.bots
             .filter { $0.status == "working" }
+            .sorted { lhs, rhs in
+                let leftFaded = lhs.isFaded(now: now, staleAfterMinutes: staleAfter)
+                let rightFaded = rhs.isFaded(now: now, staleAfterMinutes: staleAfter)
+                if leftFaded != rightFaded { return !leftFaded }
+                let left = ISODate.date(from: lhs.startedAt) ?? .distantFuture
+                let right = ISODate.date(from: rhs.startedAt) ?? .distantFuture
+                if left != right { return left < right }
+                return lhs.bot.localizedCaseInsensitiveCompare(rhs.bot) == .orderedAscending
+            }
+    }
+
+    /// Waiting on you, longest waiting first. Always at the very top.
+    private var needsBots: [Bot] {
+        model.bots
+            .filter { $0.status == "needs_input" }
             .sorted { lhs, rhs in
                 let left = ISODate.date(from: lhs.startedAt) ?? .distantFuture
                 let right = ISODate.date(from: rhs.startedAt) ?? .distantFuture
@@ -197,7 +241,7 @@ struct StatusPopoverView: View {
     private var teamBots: [Bot] {
         let rank = ["failed": 0, "done": 1, "idle": 2]
         return model.bots
-            .filter { $0.status != "working" }
+            .filter { $0.status != "working" && $0.status != "needs_input" }
             .sorted { lhs, rhs in
                 let left = rank[lhs.status] ?? 3
                 let right = rank[rhs.status] ?? 3
@@ -215,6 +259,22 @@ struct StatusPopoverView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: 32)
             }
+            if !needsBots.isEmpty {
+                Text("NEEDS YOU")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(PanelTheme.ink2)
+                    .frame(height: 14, alignment: .leading)
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
+                    .padding(.leading, 4)
+                VStack(spacing: 6) {
+                    ForEach(needsBots) { bot in
+                        NeedsCard(bot: bot, now: model.now)
+                            .frame(height: 46)
+                    }
+                }
+            }
             if !workingBots.isEmpty {
                 Text("WORKING NOW")
                     .font(.system(size: 10, weight: .semibold))
@@ -226,14 +286,14 @@ struct StatusPopoverView: View {
                     .padding(.leading, 4)
                 VStack(spacing: 6) {
                     ForEach(workingBots) { bot in
-                        WorkingCard(bot: bot, now: model.now, staleAfterMinutes: model.staleAfterMinutes, reduceMotion: reduceMotion)
+                        WorkingCard(bot: bot, now: model.now, staleAfterMinutes: model.staleAfterMinutes, reduceMotion: reduceMotion, onClear: { model.clearLocally(bot) })
                             .frame(height: 46)
                     }
                 }
             }
             if !teamBots.isEmpty {
                 Color.clear.frame(height: 8)
-                TeamCard(bots: teamBots, now: model.now)
+                TeamCard(bots: teamBots, today: model.today, now: model.now)
             }
             FinishedCard(
                 jobs: model.today,
@@ -289,7 +349,25 @@ struct StatusPopoverView: View {
             .font(.system(size: 12))
             .toggleStyle(.switch)
             .controlSize(.small)
-            Text(model.alertNote ?? "Off unless you turn it on. A new failure plays a sound and shows a banner.")
+            HStack(spacing: 8) {
+                Text("Appearance")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PanelTheme.ink)
+                Picker("Appearance", selection: Binding(
+                    get: { model.appearance },
+                    set: { model.setAppearance($0) }
+                )) {
+                    ForEach(AppearanceChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .frame(width: 180)
+            }
+            .frame(height: 24)
+            Text(model.alertNote ?? "Off unless you turn it on. A new failure is spoken aloud and shows a banner.")
                 .font(.system(size: 11))
                 .foregroundStyle(PanelTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -363,11 +441,16 @@ private struct WorkingCard: View {
     let now: Date
     let staleAfterMinutes: Int
     let reduceMotion: Bool
+    var onClear: () -> Void = {}
     @State private var hovered = false
 
     var body: some View {
         Group {
-            if bot.openURL != nil {
+            if isFaded {
+                // A maybe-stale card always shows "Check on it" and "Clear". The rest of the card does nothing,
+                // so a click never opens the chat without that choice.
+                card
+            } else if bot.openURL != nil {
                 Button(action: open) { card }
                     .buttonStyle(.plain)
             } else {
@@ -375,21 +458,29 @@ private struct WorkingCard: View {
             }
         }
         .onHover { hovered = $0 }
-        .help(bot.openURL == nil ? "" : "Open this agent's chat")
+        .help(isFaded ? "" : (bot.openURL == nil ? "" : "Open this agent's chat"))
+        .contextMenu {
+            if bot.openURL != nil {
+                Button("Check on it") { open() }
+            }
+            if isFaded {
+                Button("Clear the warning") { onClear() }
+            }
+        }
     }
 
     private var card: some View {
         HStack(spacing: 10) {
-            MiniFace(status: "working", size: 28, fill: BotAccent.nsColor(name: bot.bot, stored: bot.color))
+            MiniFace(status: isFaded ? "lost" : "working", size: 28, fill: BotAccent.nsColor(name: bot.bot, stored: bot.color))
             VStack(alignment: .leading, spacing: 0) {
                 Text(bot.bot)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(PanelTheme.ink)
+                    .foregroundStyle(isFaded ? PanelTheme.lostInk : PanelTheme.ink)
                     .lineLimit(1)
                     .frame(height: 16, alignment: .leading)
                 Text(taskLine)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(PanelTheme.ink2)
+                    .foregroundStyle(isFaded ? PanelTheme.lostInk2 : PanelTheme.ink2)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -403,14 +494,30 @@ private struct WorkingCard: View {
         .background(cardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(PanelTheme.cardRim, lineWidth: 1)
+                .strokeBorder(isFaded ? PanelTheme.lostRim : PanelTheme.cardRim, lineWidth: 1)
         )
         .shadow(color: PanelTheme.cardShadow, radius: 10, y: 4)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: isFaded ? .contain : .combine)
         .accessibilityLabel(accessibilityText)
     }
 
+    @ViewBuilder
     private var cardBackground: some View {
+        if isFaded {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(PanelTheme.lostCard)
+                if hovered {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                }
+            }
+        } else {
+            freshBackground
+        }
+    }
+
+    private var freshBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -435,7 +542,68 @@ private struct WorkingCard: View {
         }
     }
 
+    @ViewBuilder
     private var pill: some View {
+        if isFaded {
+            VStack(alignment: .trailing, spacing: 3) {
+                lostLabel
+                lostActions
+            }
+        } else {
+            freshPill
+        }
+    }
+
+    /// Black card label: a hollow ring (no pulse) and "maybe stale · 34m", then "stale? · 1h 5m" at STALE_MINUTES.
+    private var lostLabel: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .strokeBorder(PanelTheme.lostInk2, lineWidth: 1.3)
+                .frame(width: 7, height: 7)
+            Text(isStale ? "stale? · \(elapsedText)" : "maybe stale · \(elapsedText)")
+                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                .foregroundStyle(PanelTheme.lostInk)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .frame(height: 13)
+    }
+
+    /// Always shown on a maybe-stale card, small and inline.
+    private var lostActions: some View {
+        HStack(spacing: 4) {
+            Button {
+                open()
+            } label: {
+                Text("Check on it")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(bot.openURL == nil ? PanelTheme.lostInk2.opacity(0.5) : PanelTheme.lostInk)
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.18)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(bot.openURL == nil)
+            .help(bot.openURL == nil ? "No chat link for this bot. Add one in links.json." : "Open this agent's chat")
+            Button {
+                onClear()
+            } label: {
+                Text("Clear")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(PanelTheme.lostInk)
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.18)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Hide the warning on this Mac. Nothing is posted; it comes back if the bot stays quiet")
+        }
+        .fixedSize()
+    }
+
+    private var freshPill: some View {
         HStack(spacing: 5) {
             ZStack {
                 Circle()
@@ -447,10 +615,11 @@ private struct WorkingCard: View {
                     .opacity(reduceMotion ? 1 : pulse)
             }
             .frame(width: 12, height: 12)
-            Text(isStale ? "stale?" : elapsedText)
+            Text(freshPillText)
                 .font(.system(size: 12, weight: .semibold).monospacedDigit())
                 .foregroundStyle(PanelTheme.orangeText)
                 .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 8)
         .frame(height: 22)
@@ -462,6 +631,22 @@ private struct WorkingCard: View {
 
     private var isStale: Bool {
         bot.isStale(now: now, afterMinutes: staleAfterMinutes)
+    }
+
+    private var isFaded: Bool {
+        bot.isFaded(now: now, staleAfterMinutes: staleAfterMinutes)
+    }
+
+    /// Cleared on this Mac: normal working look, but say how old the last post is.
+    private var isQuieted: Bool {
+        bot.isQuieted(now: now)
+    }
+
+    private var freshPillText: String {
+        if isQuieted, let start = ISODate.date(from: bot.startedAt) {
+            return "last update \(ago(since: start, now: now))"
+        }
+        return isStale ? "stale?" : elapsedText
     }
 
     private var pulse: Double {
@@ -483,8 +668,11 @@ private struct WorkingCard: View {
 
     private var accessibilityText: String {
         var label = "\(bot.bot), working, \(taskLine)"
-        if isStale {
-            label += ", stale"
+        if isFaded, let start = ISODate.date(from: bot.startedAt) {
+            label += ", last update \(spokenAgo(since: start, now: now))"
+            label += isStale ? ", stale" : ", maybe stale"
+        } else if isQuieted, let start = ISODate.date(from: bot.startedAt) {
+            label += ", last update \(spokenAgo(since: start, now: now)), warning cleared"
         } else if !elapsedText.isEmpty {
             label += ", for \(elapsedText)"
         }
@@ -499,14 +687,134 @@ private struct WorkingCard: View {
     }
 }
 
+/// A bot waiting on you. Its own indigo card at the very top. It never goes stale, but shows how long it has waited.
+private struct NeedsCard: View {
+    let bot: Bot
+    let now: Date
+    @State private var hovered = false
+
+    var body: some View {
+        Group {
+            if bot.openURL != nil {
+                Button(action: open) { card }
+                    .buttonStyle(.plain)
+            } else {
+                card
+            }
+        }
+        .onHover { hovered = $0 }
+        .help(bot.openURL == nil ? "" : "Open this agent's chat")
+    }
+
+    private var card: some View {
+        HStack(spacing: 10) {
+            MiniFace(status: "needs_input", size: 28, fill: BotAccent.nsColor(name: bot.bot, stored: bot.color))
+            VStack(alignment: .leading, spacing: 0) {
+                Text(bot.bot)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(PanelTheme.ink)
+                    .lineLimit(1)
+                    .frame(height: 16, alignment: .leading)
+                Text(taskLine)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 15, alignment: .leading)
+            }
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(PanelTheme.indigo)
+                    .frame(width: 6, height: 6)
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(PanelTheme.indigoText)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(PanelTheme.indigoSoft)
+            )
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .background(background)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(PanelTheme.indigoRim, lineWidth: 1)
+        )
+        .shadow(color: PanelTheme.indigo.opacity(0.25), radius: 10, y: 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var background: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(PanelTheme.cardWash)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(PanelTheme.indigoTint)
+            RadialGradient(
+                stops: [
+                    .init(color: PanelTheme.indigo.opacity(0.24), location: 0),
+                    .init(color: PanelTheme.indigo.opacity(0), location: 1),
+                ],
+                center: UnitPoint(x: 0, y: 0.5),
+                startRadius: 0,
+                endRadius: 90
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            if hovered {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(PanelTheme.hoverFill)
+            }
+        }
+    }
+
+    private var since: Date? { ISODate.date(from: bot.startedAt) }
+
+    private var label: String {
+        guard let since = since else { return "needs you" }
+        return "needs you · \(ago(since: since, now: now))"
+    }
+
+    private var taskLine: String {
+        let trimmed = bot.task
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Waiting for you" : trimmed
+    }
+
+    private var accessibilityText: String {
+        var text = "\(bot.bot), needs you, \(taskLine)"
+        if let since = since { text += ", since \(spokenAgo(since: since, now: now))" }
+        if bot.openURL != nil { text += ", opens chat" }
+        return text
+    }
+
+    private func open() {
+        if let url = bot.openURL {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
 private struct TeamCard: View {
     let bots: [Bot]
+    let today: [FinishedJob]
     let now: Date
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(bots.enumerated()), id: \.element.id) { index, bot in
-                TeamRow(bot: bot, now: now, failedTint: bot.status == "failed")
+                TeamRow(bot: bot, lastPost: bot.lastPostDate(today: today), now: now, failedTint: bot.status == "failed")
                     .frame(height: 32)
                     .overlay(alignment: .bottom) {
                         if index < bots.count - 1 {
@@ -538,6 +846,7 @@ private struct TeamCard: View {
 
 private struct TeamRow: View {
     let bot: Bot
+    let lastPost: Date?
     let now: Date
     let failedTint: Bool
     @State private var hovered = false
@@ -577,6 +886,8 @@ private struct TeamRow: View {
                 .font(.system(size: bot.status == "idle" ? 11 : 11, weight: bot.status == "idle" ? .medium : .semibold).monospacedDigit())
                 .foregroundStyle(statusColor)
                 .lineLimit(1)
+                .fixedSize()
+                .layoutPriority(1)
         }
         .padding(.leading, 9)
         .padding(.trailing, 10)
@@ -604,16 +915,16 @@ private struct TeamRow: View {
         }
     }
 
+    /// "Done · 12m ago". Done and failed count from the job's end, everything else from started_at.
     private var statusText: String {
+        let word: String
         switch bot.status {
-        case "failed":
-            let since = elapsedText
-            return since.isEmpty ? "Failed" : "Failed · \(since)"
-        case "done":
-            return "Done"
-        default:
-            return "Idle"
+        case "failed": word = "Failed"
+        case "done": word = "Done"
+        default: word = "Idle"
         }
+        guard let lastPost = lastPost else { return word }
+        return "\(word) · \(ago(since: lastPost, now: now))"
     }
 
     private var statusColor: Color {
@@ -624,15 +935,10 @@ private struct TeamRow: View {
         }
     }
 
-    private var elapsedText: String {
-        guard let start = ISODate.date(from: bot.startedAt) else { return "" }
-        return elapsed(since: start, now: now)
-    }
-
     private var accessibilityText: String {
         var label = "\(bot.bot), \(bot.status)"
         if bot.status != "idle" { label += ", \(taskLine)" }
-        if bot.status == "failed", !elapsedText.isEmpty { label += ", \(elapsedText)" }
+        if let lastPost = lastPost { label += ", last update \(spokenAgo(since: lastPost, now: now))" }
         if bot.openURL != nil { label += ", opens chat" }
         return label
     }
@@ -851,11 +1157,13 @@ private struct MiniFace: View {
 
     var body: some View {
         let unit = size / 32
-        let top = Color(nsColor: BotAccent.mix(fill, with: .white, amount: 0.28))
-        let base = Color(nsColor: fill)
-        let edge = Color(nsColor: BotAccent.mix(fill, with: .black, amount: 0.22))
-        let ink = BotAccent.featureInk(fill)
-        let lightFace = BotAccent.isLight(fill)
+        let lost = status == "lost"
+        let face = lost ? PanelTheme.lostFace : fill
+        let top = Color(nsColor: BotAccent.mix(face, with: .white, amount: lost ? 0.14 : 0.28))
+        let base = Color(nsColor: face)
+        let edge = Color(nsColor: BotAccent.mix(face, with: .black, amount: lost ? 0.6 : 0.22))
+        let ink = lost ? Color.white : BotAccent.featureInk(face)
+        let lightFace = lost ? false : BotAccent.isLight(face)
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8.5 * unit, style: .continuous)
                 .fill(edge)
@@ -874,16 +1182,21 @@ private struct MiniFace: View {
                 )
                 .frame(width: size, height: 28.4 * unit)
             Capsule()
-                .fill(lightFace ? Color.black.opacity(0.14) : Color.white.opacity(0.62))
+                .fill(lightFace ? Color.black.opacity(0.14) : Color.white.opacity(lost ? 0.22 : 0.62))
                 .frame(width: 14 * unit, height: 3.4 * unit)
                 .offset(x: 6 * unit, y: 4 * unit)
-            if size >= 20 {
+            if size >= 20, !lost {
                 Circle()
                     .fill(lightFace ? Color.white.opacity(0.85) : Color.white.opacity(0.75))
                     .frame(width: 2.6 * unit, height: 2.6 * unit)
                     .offset(x: (24 - 1.3) * unit, y: (5.7 - 1.3) * unit)
             }
             features(unit, ink: ink, lightFace: lightFace)
+            if lost {
+                RoundedRectangle(cornerRadius: 8.5 * unit, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.32), lineWidth: 1)
+                    .frame(width: size, height: size)
+            }
         }
         .frame(width: size, height: size, alignment: .topLeading)
         .shadow(color: Color.black.opacity(0.18), radius: 1.5, y: 1)
@@ -893,6 +1206,21 @@ private struct MiniFace: View {
     @ViewBuilder
     private func features(_ unit: CGFloat, ink: Color, lightFace: Bool) -> some View {
         switch status {
+        case "needs_input":
+            Text("?")
+                .font(.system(size: 19 * unit, weight: .heavy, design: .rounded))
+                .foregroundStyle(ink)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: size, height: 28.4 * unit, alignment: .center)
+        case "lost":
+            Text("404")
+                .font(.system(size: max(7.5, 10.5 * unit), weight: .heavy, design: .rounded).monospacedDigit())
+                .kerning(-0.2)
+                .foregroundStyle(ink)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: size, height: 28.4 * unit, alignment: .center)
         case "working":
             eye(unit, cx: 11, cy: 15, radius: 2.7, catchlight: size >= 20, ink: ink, lightFace: lightFace)
             eye(unit, cx: 21, cy: 15, radius: 2.7, catchlight: size >= 20, ink: ink, lightFace: lightFace)
@@ -1087,6 +1415,20 @@ enum PanelTheme {
     static var cardShadow: Color { dynamic("#2B1E5C", "#000000", lightAlpha: 0.10, darkAlpha: 0.35) }
     static var hoverFill: Color { dynamic("#16151B", "#FFFFFF", lightAlpha: 0.07, darkAlpha: 0.10) }
 
+    /// Maybe stale. Black in both modes; the light rim is what keeps it apart from a dark panel.
+    static let lostFace = NSColor(srgbRed: 17.0 / 255.0, green: 17.0 / 255.0, blue: 19.0 / 255.0, alpha: 1)
+    static var lostCard: Color { dynamic("#111113", "#050506", lightAlpha: 0.92, darkAlpha: 0.94) }
+    static var lostRim: Color { dynamic("#FFFFFF", "#FFFFFF", lightAlpha: 0.28, darkAlpha: 0.30) }
+    static var lostInk: Color { dynamic("#F7F6FA", "#F7F6FA") }
+    static var lostInk2: Color { dynamic("#C9C6D3", "#BDBAC8") }
+
+    /// Needs input. Indigo #4F5BE8 (hue 235°), clear of orange, red, green, black, grey and every bot colour.
+    static var indigo: Color { dynamic("#4F5BE8", "#6B76F5") }
+    static var indigoText: Color { dynamic("#2A2F9E", "#C3C8FF") }
+    static var indigoTint: Color { dynamic("#4F5BE8", "#4F5BE8", lightAlpha: 0.10, darkAlpha: 0.20) }
+    static var indigoSoft: Color { dynamic("#4F5BE8", "#6B76F5", lightAlpha: 0.16, darkAlpha: 0.26) }
+    static var indigoRim: Color { dynamic("#4F5BE8", "#8B93FF", lightAlpha: 0.45, darkAlpha: 0.45) }
+
     static func statusBase(_ status: String) -> Color {
         switch status {
         case "working": return orange
@@ -1201,6 +1543,28 @@ private func elapsed(since start: Date, now: Date) -> String {
     return "\(hours / 24)d"
 }
 
+/// "now" under a minute, then "12m ago", "3h ago", "2d ago".
+private func ago(since date: Date, now: Date) -> String {
+    let seconds = Int(now.timeIntervalSince(date))
+    if seconds < 60 { return "now" }
+    let minutes = seconds / 60
+    if minutes < 60 { return "\(minutes)m ago" }
+    let hours = minutes / 60
+    if hours < 24 { return "\(hours)h ago" }
+    return "\(hours / 24)d ago"
+}
+
+private func spokenAgo(since date: Date, now: Date) -> String {
+    let seconds = Int(now.timeIntervalSince(date))
+    if seconds < 60 { return "just now" }
+    let minutes = seconds / 60
+    if minutes < 60 { return minutes == 1 ? "1 minute ago" : "\(minutes) minutes ago" }
+    let hours = minutes / 60
+    if hours < 24 { return hours == 1 ? "1 hour ago" : "\(hours) hours ago" }
+    let days = hours / 24
+    return days == 1 ? "1 day ago" : "\(days) days ago"
+}
+
 private func durationLabel(ms: Int) -> String {
     let seconds = max(0, ms / 1000)
     if seconds < 60 { return "\(seconds)s" }
@@ -1210,4 +1574,124 @@ private func durationLabel(ms: Int) -> String {
     let extra = minutes % 60
     if extra == 0 { return "\(hours)h" }
     return "\(hours)h \(extra)m"
+}
+
+/// `ChiefStatus --render-preview <folder>`: sample panels in light and dark, the 404 face at 28 and 20 pt,
+/// and every menu bar cube on a light and a dark bar. Nothing is read from or sent to the feed.
+enum PreviewRenderer {
+    static func run(folder: String) -> Int32 {
+        let directory = URL(fileURLWithPath: (folder as NSString).expandingTildeInPath, isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let model = sampleModel()
+        var ok = true
+        for (name, dark) in [("light", false), ("dark", true)] {
+            let height = Metrics.height(for: model)
+            let panel = ZStack {
+                Rectangle().fill(dark ? Color(white: 0.16) : Color(white: 0.93))
+                StatusPopoverView(model: model)
+            }
+            .frame(width: Metrics.width, height: height)
+            ok = write(panel, size: NSSize(width: Metrics.width, height: height), dark: dark, to: directory.appendingPathComponent("panel-\(name).png")) && ok
+
+            model.editingAddress = true
+            model.draftURL = "https://example.com/status"
+            let setupHeight = Metrics.height(for: model)
+            let settings = ZStack {
+                Rectangle().fill(dark ? Color(white: 0.16) : Color(white: 0.93))
+                StatusPopoverView(model: model)
+            }
+            .frame(width: Metrics.width, height: setupHeight)
+            ok = write(settings, size: NSSize(width: Metrics.width, height: setupHeight), dark: dark, to: directory.appendingPathComponent("settings-\(name).png")) && ok
+            model.editingAddress = false
+
+            let faces = HStack(spacing: 14) {
+                MiniFace(status: "working", size: 28, fill: BotAccent.nsColor(name: "Agent1", stored: "#3B82F6"))
+                MiniFace(status: "lost", size: 28, fill: BotAccent.nsColor(name: "Agent2", stored: "#8B5CF6"))
+                MiniFace(status: "lost", size: 20, fill: BotAccent.nsColor(name: "Agent2", stored: "#8B5CF6"))
+                MiniFace(status: "idle", size: 20, fill: BotAccent.nsColor(name: "Agent5", stored: "#14B8A6"))
+                MiniFace(status: "needs_input", size: 28, fill: BotAccent.nsColor(name: "Agent6", stored: "#A855F7"))
+            }
+            .padding(12)
+            .background(dark ? Color(white: 0.16) : Color(white: 0.93))
+            ok = write(faces, size: NSSize(width: 210, height: 52), dark: dark, to: directory.appendingPathComponent("faces-\(name).png")) && ok
+
+            let states: [BarState] = [
+                BarState(tone: .grey),
+                BarState(tone: .orange),
+                BarState(tone: .orange, staleDot: true, staleCount: 1),
+                BarState(tone: .black, staleCount: 1),
+                BarState(tone: .indigo, needsCount: 1),
+                BarState(tone: .red),
+            ]
+            let bar = HStack(spacing: 14) {
+                ForEach(0 ..< states.count, id: \.self) { index in
+                    Image(nsImage: StatusIcon.image(tone: states[index].tone, pose: IconPose(), staleDot: states[index].staleDot))
+                        .frame(width: 18, height: 18)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 180, height: 24)
+            .background(dark ? Color(red: 0.12, green: 0.12, blue: 0.14) : Color(red: 0.93, green: 0.93, blue: 0.95))
+            ok = write(bar, size: NSSize(width: 180, height: 24), dark: dark, to: directory.appendingPathComponent("menubar-\(name).png")) && ok
+        }
+        print(ok ? "Wrote previews to \(directory.path)" : "Some previews failed")
+        return ok ? 0 : 1
+    }
+
+    private static func sampleModel() -> StatusModel {
+        let model = StatusModel()
+        let now = Date()
+        func iso(_ minutesAgo: Double) -> String {
+            let formatter = ISO8601DateFormatter()
+            return formatter.string(from: now.addingTimeInterval(-minutesAgo * 60))
+        }
+        model.feedURL = "https://example.com/status"
+        model.lastUpdated = now
+        model.now = now
+        model.staleAfterMinutes = 60
+        model.todayExpanded = true
+        model.setSampleBots([
+            Bot(bot: "Agent6", status: "needs_input", task: "Which logo do you want?", startedAt: iso(5), color: "#A855F7"),
+            Bot(bot: "Agent1", status: "working", task: "Writing the release notes", startedAt: iso(4), color: "#3B82F6"),
+            Bot(bot: "Agent2", status: "working", task: "Old task label", startedAt: iso(34), color: "#8B5CF6"),
+            Bot(bot: "Agent3", status: "working", task: "Forgot to post done", startedAt: iso(65), color: "#EC4899"),
+            Bot(bot: "Agent4", status: "done", task: "Fixed the login page", startedAt: iso(30), color: "#06B6D4"),
+            Bot(bot: "Agent5", status: "idle", task: "", startedAt: iso(180), color: "#14B8A6"),
+        ])
+        model.today = sampleJobs(now: now)
+        return model
+    }
+
+    private static func sampleJobs(now: Date) -> [FinishedJob] {
+        let formatter = ISO8601DateFormatter()
+        let ended = formatter.string(from: now.addingTimeInterval(-12 * 60))
+        let started = formatter.string(from: now.addingTimeInterval(-30 * 60))
+        let json = "[{\"bot\":\"Agent4\",\"task\":\"Fixed the login page\",\"started_at\":\"\(started)\",\"ended_at\":\"\(ended)\",\"duration_ms\":1080000,\"result\":\"done\"}]"
+        return (try? JSONDecoder().decode([FinishedJob].self, from: Data(json.utf8))) ?? []
+    }
+
+    private static func write<V: View>(_ view: V, size: NSSize, dark: Bool, to url: URL) -> Bool {
+        guard let appearance = NSAppearance(named: dark ? .darkAqua : .aqua) else { return false }
+        var png: Data?
+        appearance.performAsCurrentDrawingAppearance {
+            let hosting = NSHostingView(rootView: view.environment(\.colorScheme, dark ? .dark : .light))
+            hosting.appearance = appearance
+            hosting.frame = NSRect(origin: .zero, size: size)
+            let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = appearance
+            window.contentView = hosting
+            hosting.layoutSubtreeIfNeeded()
+            hosting.display()
+            guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return }
+            hosting.cacheDisplay(in: hosting.bounds, to: rep)
+            png = rep.representation(using: .png, properties: [:])
+        }
+        guard let data = png else { return false }
+        do {
+            try data.write(to: url)
+            return true
+        } catch {
+            return false
+        }
+    }
 }

@@ -4,8 +4,8 @@ class ChiefStatus < Formula
   license "MIT"
 
   # Install from the main branch until a tagged release exists.
-  # After tagging v1.2.0, you can switch this formula to a tarball:
-  #   url "https://github.com/pohstep/chief-status/archive/refs/tags/v1.2.0.tar.gz"
+  # After tagging v1.3.0, you can switch this formula to a tarball:
+  #   url "https://github.com/pohstep/chief-status/archive/refs/tags/v1.3.0.tar.gz"
   #   sha256 "<sha256 of that tarball>"
   # and drop the `head` line. Until then, install with --HEAD.
   head "https://github.com/pohstep/chief-status.git", branch: "main"

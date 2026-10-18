@@ -526,6 +526,53 @@ async function main() {
 			"live update should keep the link when url is omitted",
 		);
 
+		// needs_input: accepted, gets a fresh clock when the status changes, keeps it on a repeat, records no job.
+		const jobsBeforeNeeds = (await request(`${base}/status`)).body.today.length;
+		await postStatus({ bot: "AskBot", status: "working", task: "drafting", started_at: "2026-10-18T09:00:00Z" });
+		const asked = await postStatus({ bot: "AskBot", status: "needs_input", task: "which logo?" });
+		assert(asked.status === 200, `needs_input post ${asked.status} ${JSON.stringify(asked.body)}`);
+		assert(asked.body.bot.status === "needs_input", "needs_input should be stored");
+		assert(asked.body.bot.started_at !== "2026-10-18T09:00:00.000Z", "needs_input should start a new clock");
+		assert(Date.now() - Date.parse(asked.body.bot.started_at) < 60000, "needs_input clock should be now");
+		const askedAgain = await postStatus({ bot: "AskBot", status: "needs_input", task: "still waiting" });
+		assert(askedAgain.body.bot.started_at === asked.body.bot.started_at, "a repeat needs_input keeps its clock");
+		const afterNeeds = await request(`${base}/status`);
+		assert(afterNeeds.body.today.length === jobsBeforeNeeds, "needs_input must not record a job");
+		assert(
+			afterNeeds.body.bots.some((bot) => bot.bot === "AskBot" && bot.status === "needs_input"),
+			"GET should list needs_input",
+		);
+		const unknownStatus = await postStatus({ bot: "AskBot", status: "waiting", task: "" });
+		assert(unknownStatus.status === 400, `unknown status should be 400, was ${unknownStatus.status}`);
+		assert(String(unknownStatus.body.error).includes("needs_input"), "the error should list needs_input");
+		await postStatus({ bot: "AskBot", status: "idle", task: "" });
+
+		// DELETE /status/<bot>: password required, removes the bot and its jobs, unknown is 404.
+		await postStatus({ bot: "GoneBot", status: "working", task: "temp", started_at: "2026-10-18T08:00:00Z" });
+		await postStatus({ bot: "GoneBot", status: "done", task: "temp" });
+		const delUrl = `${base}/status/GoneBot`;
+		const delNoAuth = await request(delUrl, { method: "DELETE" });
+		assert(delNoAuth.status === 401, `delete without password ${delNoAuth.status}`);
+		const delBadAuth = await request(delUrl, { method: "DELETE", headers: { Authorization: "Bearer wrong-token" } });
+		assert(delBadAuth.status === 401, `delete with wrong password ${delBadAuth.status}`);
+		const stillThere = await request(`${base}/status`);
+		assert(stillThere.body.bots.some((bot) => bot.bot === "GoneBot"), "a refused delete must keep the bot");
+		const deleted = await request(delUrl, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+		assert(deleted.status === 200, `delete ${deleted.status} ${JSON.stringify(deleted.body)}`);
+		assert(deleted.body.deleted === "GoneBot" && deleted.body.jobs_removed >= 1, "delete should report the jobs it removed");
+		const afterDelete = await request(`${base}/status`);
+		assert(!afterDelete.body.bots.some((bot) => bot.bot === "GoneBot"), "deleted bot should leave the feed");
+		assert(!afterDelete.body.today.some((job) => job.bot === "GoneBot"), "deleted bot's jobs should go too");
+		assert(afterDelete.body.bots.some((bot) => bot.bot === "Agent2"), "other bots stay after a delete");
+		const deleteAgain = await request(delUrl, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+		assert(deleteAgain.status === 404, `deleting a missing bot ${deleteAgain.status}`);
+		const deleteBadName = await request(`${base}/status/%00bad`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+		assert(deleteBadName.status === 400, `bad bot name ${deleteBadName.status}`);
+		const deleteRoot = await request(`${base}/status`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+		assert(deleteRoot.status === 405, `DELETE /status should be 405, was ${deleteRoot.status}`);
+		const liveStill = await request(`${base}/status/live`);
+		assert(liveStill.status === 426, `GET /status/live without upgrade should stay 426, was ${liveStill.status}`);
+
 		for (let i = 0; i < 201; i += 1) {
 			const stamp = new Date(Date.UTC(2026, 9, 18, 0, 0, i)).toISOString();
 			const cappedPost = await postStatus({

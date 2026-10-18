@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Render docs/demo.gif, docs/panel.png, docs/hero.png and docs/icon.png.
 
+The panel shows one fresh working card and one maybe-stale card (black, 404 face).
+
 This is a faithful port of the menu-bar drawing and motion in
 menubar/Sources/Icon.swift (StatusIcon.paint, fitScale, FaceMotion).
 The Mac app is not compiled here. Geometry stays in the same 18pt space
@@ -323,6 +325,7 @@ FONT_FILES = {
     "regular": "Inter-Regular.ttf",
     "medium": "Inter-Medium.ttf",
     "semibold": "Inter-SemiBold.ttf",
+    "bold": "Inter-Bold.ttf",
     "mono": "JetBrainsMono-Regular.ttf",
 }
 FONT_DIRS = [
@@ -349,6 +352,9 @@ ORANGE_TEXT = (116, 62, 0, 255)
 RED_TEXT = (154, 27, 35, 255)
 GREEN_TEXT = (18, 90, 49, 255)
 DONE_GREEN = (46, 184, 102, 255)
+LOST_FACE = (17, 17, 19)
+LOST_INK = (247, 246, 250, 255)
+LOST_INK2 = (201, 198, 211, 255)
 PANEL_WASH = (255, 255, 255, 128)
 CARD_WASH = (255, 255, 255, 184)
 
@@ -430,11 +436,17 @@ def draw_mini_face(
     fill: tuple[int, int, int],
     points: float,
 ) -> None:
-    """Glossy cube. The fill is the bot colour. Status only changes the features."""
-    light = is_light(fill)
+    """Glossy cube. The fill is the bot colour. Status only changes the features.
+
+    "lost" is the maybe-stale face: black, a light rim, and 404 where the eyes go.
+    """
+    lost = status == "lost"
+    if lost:
+        fill = LOST_FACE
+    light = False if lost else is_light(fill)
     ink = (26, 20, 16, 255) if light else (255, 255, 255, 255)
-    top = mix_rgb(fill, (255, 255, 255), 0.28)
-    edge = mix_rgb(fill, (0, 0, 0), 0.22)
+    top = mix_rgb(fill, (255, 255, 255), 0.14 if lost else 0.28)
+    edge = mix_rgb(fill, (0, 0, 0), 0.6 if lost else 0.22)
     side = max(1, int(round(size)))
     tile = Image.new("RGBA", (side, side), (0, 0, 0, 0))
     radius = 8.5 / 32 * side
@@ -460,9 +472,9 @@ def draw_mini_face(
 
     pen = ImageDraw.Draw(tile)
     unit = side / 32
-    shine = (0, 0, 0, 36) if light else (255, 255, 255, 158)
+    shine = (0, 0, 0, 36) if light else (255, 255, 255, 56 if lost else 158)
     pen.rounded_rectangle((6 * unit, 4 * unit, 20 * unit, 7.4 * unit), radius=1.7 * unit, fill=shine)
-    if points >= 20:
+    if points >= 20 and not lost:
         dot = 1.3 * unit
         pen.ellipse(
             ((24 - dot) * unit, (5.7 - dot) * unit, (24 + dot) * unit, (5.7 + dot) * unit),
@@ -489,7 +501,13 @@ def draw_mini_face(
             joint="curve",
         )
 
-    if status == "working":
+    if lost:
+        label_font = font("bold", max(1, int(round(max(7.5, 10.5 * points / 32) * side / points))))
+        bbox = pen.textbbox((0, 0), "404", font=label_font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pen.text(((side - tw) / 2 - bbox[0], (28.4 * unit - th) / 2 - bbox[1]), "404", font=label_font, fill=ink)
+        pen.rounded_rectangle((0, 0, side - 1, side - 1), radius=radius, outline=(255, 255, 255, 82), width=max(1, int(round(side / points))))
+    elif status == "working":
         eye(11, 15, 2.7, points >= 20)
         eye(21, 15, 2.7, points >= 20)
         smile = quad((12.6 * unit, 20.2 * unit), (16 * unit, 24.6 * unit), (19.4 * unit, 20.2 * unit))
@@ -640,17 +658,40 @@ def render_panel() -> None:
         draw.ellipse((px(pill_x + 11), px(top + 20), px(pill_x + 17), px(top + 26)), fill=(243, 156, 40, 255))
         text(pill_x + 22, top + 15, elapsed, "semibold", 12, ORANGE_TEXT)
 
-    # Longest running first.
-    working_card(72, "Agent2", "updating the panel", "12m")
-    working_card(124, "Agent1", "drafting the homepage", "4m")
+    def lost_card(top: float, name: str, task: str, label: str) -> None:
+        """A working bot with no post for 30 min: black card, 404 face, maybe stale."""
+        box = (12, top, 316, top + 46)
+        x0, y0, x1, y1 = (int(round(px(v))) for v in box)
+        layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        pen = ImageDraw.Draw(layer)
+        pen.rounded_rectangle((x0, y0, x1, y1), radius=px(14), fill=LOST_FACE + (235,))
+        pen.rounded_rectangle((x0, y0, x1, y1), radius=px(14), outline=(255, 255, 255, 72), width=max(1, scale))
+        paste(layer)
+        draw_mini_face(image, (px(21), px(top + 9)), px(28), "lost", colours[name], 28)
+        refresh()
+        text(21 + 28 + 10, top + 8, name, "semibold", 13, LOST_INK)
+        text(21 + 28 + 10, top + 24, task, "regular", 11.5, LOST_INK2)
+        label_w = text_width(label, "semibold", 11)
+        pill_w = 7 + 9 + 5 + label_w + 7
+        pill_x = 316 - 10 - pill_w
+        pill = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        ImageDraw.Draw(pill).rounded_rectangle(
+            (px(pill_x), px(top + 12), px(316 - 10), px(top + 34)), radius=px(7), fill=(255, 255, 255, 33))
+        paste(pill)
+        draw.ellipse((px(pill_x + 7), px(top + 18.5), px(pill_x + 16), px(top + 27.5)), outline=LOST_INK2, width=max(1, int(1.5 * scale)))
+        text(pill_x + 21, top + 16, label, "semibold", 11, LOST_INK)
+
+    # Fresh cards first, longest running first. A bot quiet for 30+ min drops below, in black.
+    working_card(72, "Agent1", "drafting the homepage", "4m")
+    lost_card(124, "Agent2", "updating the panel", "maybe stale · 34m")
 
     team_box = (12, 178, 316, 306)
     card(team_box)
     team = [
-        ("Agent3", "failed", "export slides", "Failed · 3m", RED_TEXT),
-        ("Agent4", "done", "word list", "Done", GREEN_TEXT),
-        ("Agent5", "idle", "", "Idle", INK2),
-        ("Agent6", "idle", "", "Idle", INK2),
+        ("Agent3", "failed", "export slides", "Failed · 3m ago", RED_TEXT),
+        ("Agent4", "done", "word list", "Done · 12m ago", GREEN_TEXT),
+        ("Agent5", "idle", "", "Idle · 2h ago", INK2),
+        ("Agent6", "idle", "", "Idle · 3h ago", INK2),
     ]
     for index, (name, status, task, trailing, trailing_fill) in enumerate(team):
         top = 178 + index * 32
@@ -738,7 +779,10 @@ def render_panel() -> None:
 
 
 def render_hero() -> None:
-    """docs/hero.png: a desktop, a menu bar with the orange cube, and the panel under it."""
+    """docs/hero.png: a desktop, a menu bar with the orange cube, and the panel under it.
+
+    One working bot has gone quiet, so the orange cube carries the small black dot.
+    """
     panel = Image.open(DOCS / "panel.png").convert("RGBA")
     width, height = 1600, 1140
     desk = Image.new("RGB", (width, height), (40, 34, 64))
@@ -770,6 +814,12 @@ def render_hero() -> None:
     ImageDraw.Draw(glow).rounded_rectangle((icon_x - 10, 4, icon_x + 50, 44), radius=8, fill=(255, 255, 255, 120))
     desk.alpha_composite(glow)
     desk.alpha_composite(icon, (icon_x, 4))
+    # Small black dot with a light rim, bottom right: another working bot may be stale.
+    dot = ImageDraw.Draw(desk)
+    dot_x, dot_y, dot_r = icon_x + 33.5, 4 + 33.5, 6.7
+    dot.ellipse((dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r), fill=(255, 255, 255, 255))
+    inner = dot_r - 2.4
+    dot.ellipse((dot_x - inner, dot_y - inner, dot_x + inner, dot_y + inner), fill=LOST_FACE + (255,))
 
     # Left side: the name and what it does, in plain words.
     draw = ImageDraw.Draw(desk)

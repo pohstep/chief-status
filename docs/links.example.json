@@ -1,0 +1,4 @@
+{
+  "Agent1": "https://example.com/agent1",
+  "Agent2": "myapp://chat?id=REPLACE-WITH-YOUR-ID"
+}

@@ -5,6 +5,15 @@ import SwiftUI
 private let appDelegate = AppDelegate()
 
 let application = NSApplication.shared
+
+// `ChiefStatus --render-preview <folder>` draws sample panels and faces to PNG files, then quits.
+// Used for the README images and for checking the look without touching the live feed.
+if let flag = CommandLine.arguments.firstIndex(of: "--render-preview") {
+    let folder = flag + 1 < CommandLine.arguments.count ? CommandLine.arguments[flag + 1] : FileManager.default.currentDirectoryPath
+    application.setActivationPolicy(.prohibited)
+    exit(PreviewRenderer.run(folder: folder))
+}
+
 application.delegate = appDelegate
 application.setActivationPolicy(.accessory)
 application.run()
@@ -15,12 +24,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let model = StatusModel()
     private let animator = FaceAnimator()
     private var lockFD: Int32 = -1
+    private var barState: BarState?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !takeSingleInstanceLock() {
             NSApp.terminate(nil)
             return
         }
+
+        AppearanceChoice.stored().apply()
 
         let controller = PopoverController(model: model)
         popover = NSPopover()
@@ -49,8 +61,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.onChange = { [weak self] in
             self?.updateChrome()
         }
+        model.onTick = { [weak self] in
+            self?.updateBarIfChanged()
+        }
         model.start()
         updateChrome()
+
+        // Lets a script open or close the panel for screenshots and tests, without UI scripting:
+        // a distributed notification named com.chiefstatus.togglePanel.
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(togglePanelFromNotification(_:)),
+            name: NSNotification.Name("com.chiefstatus.togglePanel"),
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    @objc private func togglePanelFromNotification(_ notification: Notification) {
+        togglePopover(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -84,10 +113,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem.button?.highlight(false)
     }
 
+    private func currentBarState() -> BarState {
+        BarState.from(bots: model.bots, now: Date(), staleAfterMinutes: model.staleAfterMinutes)
+    }
+
+    private func applyBar(_ state: BarState) {
+        barState = state
+        animator.setState(state)
+        statusItem.button?.toolTip = state.toolTip
+        statusItem.button?.setAccessibilityLabel(state.toolTip)
+    }
+
+    /// A bot can go stale with no new post, so the 1 s clock re-checks the cube.
+    private func updateBarIfChanged() {
+        let state = currentBarState()
+        if state != barState {
+            applyBar(state)
+        }
+    }
+
     private func updateChrome() {
-        let tone = BarTone.from(bots: model.bots)
-        animator.setTone(tone)
-        statusItem.button?.toolTip = tone.toolTip
+        applyBar(currentBarState())
+        let wanted = model.appearance.nsAppearance
+        if popover.appearance?.name != wanted?.name {
+            popover.appearance = wanted
+        }
         let size = NSSize(width: Metrics.width, height: Metrics.height(for: model))
         if popover.contentSize != size {
             popover.contentSize = size
