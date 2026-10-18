@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.4.0 — 2026-10-18
+## v1.4.0 — 2026-10-19
 
 In plain words:
 

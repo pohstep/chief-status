@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/hero.png" alt="The Chief Status panel open under the menu bar cube: one bot working, one maybe stale in a black card with a 404 face, one failed, one done, and today's finished jobs">
+  <img src="docs/hero.png" alt="The Chief Status panel open under the menu bar cube: one bot that needs you with a ? face, one working, two maybe stale in black cards with 404 on their faces in their own colours, one done, one idle, and today's finished jobs">
 </p>
 
 ## What it does
@@ -72,9 +72,25 @@ There are three parts:
 5. Paste your feed address (from [Set up the feed](#set-up-the-feed)) and click **Save**. If you have no feed yet, click **No feed yet? Set one up**, or **Deploy to Cloudflare**.
 6. To have it start every time you log in, click the cube, open **Settings**, and turn on **Open at login**. You can also add it under **System Settings → General → Login Items**.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.4.0](CHANGELOG.md#v140--2026-10-18).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.4.0](CHANGELOG.md#v140--2026-10-19).
 
 Terminal users can install the same disk image with Homebrew. See [Install with Homebrew](#install-with-homebrew).
+
+### Check what you downloaded
+
+Each release lists the SHA-256 of its disk image. The disk image is built with `./packaging/make-dmg.sh` from the tagged commit. In Terminal, in the folder you downloaded to:
+
+```bash
+shasum -a 256 Chief-Status-1.4.0.dmg
+```
+
+For v1.4.0 it must print:
+
+```
+a3990defd9da19b9542ae465e01e0ebbe0b43f2cbe66aa6bb8f8ebb13e2fad6b  Chief-Status-1.4.0.dmg
+```
+
+If it prints anything else, delete the file and download it again from the [release page](https://github.com/pohstep/chief-status/releases/tag/v1.4.0).
 
 ### Why does macOS warn me?
 
@@ -114,7 +130,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 **Icon colour** (Settings) sets the colour of the working cube, the **404** cube and the **?** cube. Default keeps today's orange. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle and red failed stay as they are. The **404** and **?** marks, and the eyes, are drawn dark or white, whichever reads better on your colour. There is no outline.
 
 <p align="center">
-  <img src="docs/panel.png" width="328" alt="The panel up close: a fresh orange working card, a black maybe-stale card with a 404 face, and each row showing when that bot last posted">
+  <img src="docs/panel.png" width="328" alt="The panel up close: a needs-you card at the top, a fresh working card, two black maybe-stale cards whose faces keep the bot's colour with 404 on them, and each row showing when that bot last posted">
 </p>
 
 How to read the panel:
@@ -444,7 +460,7 @@ brew tap pohstep/tap
 brew install --cask chief-status
 ```
 
-The recipe in this repo is `packaging/homebrew/Casks/chief-status.rb`. Copy it into the `pohstep/homebrew-tap` repo and fill in the SHA-256 of `Chief-Status-1.4.0.dmg` first. Until that tap is published, use the `.dmg` or [build it yourself](#build-it-yourself).
+The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.4.0.dmg` and checks the same SHA-256 listed above. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`.
 
 The cask installs **Chief Status** into `/Applications`. The app is unsigned. The first time macOS blocks it, use **Open Anyway** in **System Settings → Privacy & Security**, or:
 
