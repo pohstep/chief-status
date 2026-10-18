@@ -63,6 +63,7 @@ There are three parts:
 ## Download and install
 
 1. Download `Chief-Status-1.4.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer.
+   - **Or, with Homebrew:** `brew install --cask pohstep/tap/chief-status`. This puts **Chief Status** in Applications for you, so skip step 2 and go to step 3.
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
    - **macOS 15 Sequoia or newer:** click **Done**. Open **System Settings → Privacy & Security**, scroll down to *"Chief Status was blocked…"*, click **Open Anyway**, and type your Mac password.
@@ -454,6 +455,12 @@ Do not put the read token in `wrangler.toml` or in `.dev.vars`. With the require
 ## Install with Homebrew
 
 Homebrew can install the release disk image, so you don't need the Command Line Tools:
+
+```bash
+brew install --cask pohstep/tap/chief-status
+```
+
+That one line adds the tap and installs the app. The longer form does the same:
 
 ```bash
 brew tap pohstep/tap
