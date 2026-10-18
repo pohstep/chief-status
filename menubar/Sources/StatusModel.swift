@@ -94,14 +94,15 @@ struct Bot: Decodable, Identifiable {
         url = rawURL.isEmpty ? nil : rawURL
         let rawColor = try container.decodeIfPresent(String.self, forKey: .color) ?? ""
         color = rawColor.isEmpty ? nil : rawColor
-        approval = false
+        var flag = false
         if container.contains(.approval) {
-            if let flag = try? container.decode(Bool.self, forKey: .approval) {
-                approval = flag
+            if let value = try? container.decode(Bool.self, forKey: .approval) {
+                flag = value
             } else if let number = try? container.decode(Int.self, forKey: .approval) {
-                approval = number != 0
+                flag = number != 0
             }
         }
+        approval = flag
         localURL = nil
         quietUntil = nil
     }
