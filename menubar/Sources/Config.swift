@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -177,6 +178,7 @@ enum LoginItem {
     }
 
     static func setEnabled(_ on: Bool) throws {
+        LegacyLaunchAgent.removeIfPresent()
         let status = SMAppService.mainApp.status
         if on {
             if status != .enabled {
@@ -185,6 +187,29 @@ enum LoginItem {
         } else if status == .enabled || status == .requiresApproval {
             try SMAppService.mainApp.unregister()
         }
+    }
+}
+
+/// install.sh used to write this LaunchAgent, which started the app even when the Settings switch was off.
+/// The switch is the only login control now. This removes the old agent. It does not create a new one.
+enum LegacyLaunchAgent {
+    static let label = "com.chiefstatus.menubar"
+
+    static func removeIfPresent() {
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+        if !FileManager.default.fileExists(atPath: plist.path) {
+            return
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        // disable, not bootout: bootout would quit the app if this agent is what launched it.
+        process.arguments = ["disable", "gui/\(Darwin.getuid())/\(label)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        try? FileManager.default.removeItem(at: plist)
     }
 }
 
@@ -511,11 +536,13 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
 }
 
 /// Needs-you sound. UserDefaults domain com.chiefstatus.menubar.
-/// A missing sound key means on. A missing reminder means off.
+/// A missing sound key means off. A missing reminder means off.
 enum NeedsYouSettings {
     static let soundKey = "needsYouSound"
     static let reminderKey = "needsYouReminderMinutes"
     static let reminderChoices = [0, 2, 5, 10, 15]
+    /// Spoken reminders in one waiting episode, then silence until a new bot starts waiting.
+    static let reminderCap = 3
 
     static func storedBool(_ key: String, fallback: Bool) -> Bool {
         if UserDefaults.standard.object(forKey: key) == nil {

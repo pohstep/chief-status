@@ -227,6 +227,8 @@ final class FaceAnimator {
         onImage?(StatusIcon.image(tone: tone, pose: pose, staleDot: staleDot))
     }
 
+    /// The needs-you "?" cube and the stale "404" cube do not schedule a timer.
+    /// Nothing here redraws at 30 fps. Orange and grey keep the 1.4 motion, at 12 or 20 fps, and only while that face is showing.
     private func desiredClock() -> Clock {
         switch tone {
         case .orange:

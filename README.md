@@ -32,10 +32,10 @@
 - **Every bot has its own colour.** Each bot's face is filled with its own colour, so you can tell them apart in a second. The bot picks the colour itself the first time it reports (see [Colours](#colours)).
 - **Real job times.** Each card shows how long the job has been running. **Finished today** lists every job that finished today and how long it took.
 - **Live.** A change shows up within a second or two, with no refresh button.
-- **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure is spoken aloud ("Chief task failed") and shows a macOS banner. It is off until you turn it on.
-- **A sound when a bot needs you, on by default.** When a bot starts waiting, the Mac speaks "<Bot> needs you", or "<Bot> needs your approval" when the post sets `approval`. It speaks once. A sound-only reminder is off until you turn it on. See [When a bot needs you](#when-a-bot-needs-you).
-- **Stale warning.** A bot that has said "working" for over an hour gets a **stale?** tag, which usually means it forgot to say it was done.
-- **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes moves to a black card, its face (still in the bot's own colour) shows **404**, and it says **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work.
+- **Failure alert, if you want one.** Switch on **Alert when a bot fails** and a new failure is spoken aloud ("Chief task failed") and shows a macOS banner. It is off until you turn it on. The spoken line waits 10 minutes before that same bot can set it off again. macOS asks for notification permission only when you turn this on, not at launch.
+- **A sound when a bot needs you, off until you turn it on.** When a bot starts waiting, the Mac speaks "<Bot> needs you", or "<Bot> needs your approval" when the post sets `approval`. It speaks once. A sound-only reminder is off until you turn it on, and then it speaks at most 3 times. See [When a bot needs you](#when-a-bot-needs-you).
+- **Stale warning.** A working bot that hasn't posted for over an hour gets a **stale?** tag, which usually means it forgot to say it was done. A long job that keeps posting stays orange.
+- **Spot a bot that went quiet.** Every row says when that bot last posted, like `Done · 12m ago`. A working bot that hasn't posted for 30 minutes moves to a black card, its face (still in the bot's own colour) shows **404**, and it says **maybe stale · 34m**, and drops below the bots that are really busy. So an old task label can't pass for current work. The clock is the last post, not the job's start.
 - **A bot waiting on you gets its own card.** A bot that posts `needs_input` (a question, an approval) gets an indigo card with a **?** face at the very top, labelled **needs you · 5m ago**. It never turns stale. The header counts it too.
 - **Click to open the chat.** If a bot gives a link to its chat, clicking its row opens that chat. You can also keep links on your Mac only, in `links.json` (see [Chat links on your Mac](#chat-links-on-your-mac)).
 - **Check on it, or Clear.** Every black maybe-stale card has two small buttons, always visible: **Check on it** opens that bot's chat. **Clear** hides the warning on this Mac only: the bot stays working, the card goes back to orange with **last update 36m ago**, and the warning comes back if it stays quiet another 30 minutes. Nothing is posted. Right-click a card for the same choices. The header counts quiet bots apart, like `1 working · 2 maybe stale`.
@@ -72,7 +72,7 @@ There are three parts:
    - **Or, in Terminal:** `xattr -dr com.apple.quarantine "/Applications/Chief Status.app"`
 4. Look for the small cube in your menu bar, near the clock. There is no Dock icon and no window. Click the cube.
 5. Paste your feed address (from [Set up the feed](#set-up-the-feed)) and click **Save**. If you have no feed yet, click **No feed yet? Set one up**, or **Deploy to Cloudflare**.
-6. To have it start every time you log in, click the cube, open **Settings**, and turn on **Open at login**. You can also add it under **System Settings → General → Login Items**.
+6. To have it start every time you log in, click the cube, open **Settings**, and turn on **Open at login**. You can also add it under **System Settings → General → Login Items**. That switch is the only login control. `./install.sh` does not register one. The app removes an older LaunchAgent (`com.chiefstatus.menubar`) on launch, so a previous install cannot keep starting it after the switch is off.
 
 What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.5.0](CHANGELOG.md#v150--2026-10-18).
 
@@ -116,7 +116,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
 | Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login**, **Alert when a bot fails**, or **Sound alert when a bot needs you** on or off, set the sound-only reminder, set a **Read token**, set **Icon colour**, set **Appearance** to System, Light or Dark, or open **About** and check for updates |
 | Click **No feed yet? Set one up** | Open these setup steps |
-| Click **Send a test post** | Post one working line for a bot named Test, then set it idle and remove it, so you can see the panel light up without leaving a Test card on the feed |
+| Click **Send a test post** | Post one working line for a bot named `ChiefStatusTest-<time>`, then set it idle and remove that same name, so you can see the panel light up without leaving a card on the feed |
 | Click **Deploy to Cloudflare** | Open the one-click deploy page for the feed. That page first copies the code into your own GitHub or GitLab account |
 | Click **Copy prompt** or **Copy link** | Copy the bot prompt, or a `chiefstatus://setup` link that fills in this Mac. Both include the post password. When a read token is filled in, the link also includes it, and opening the link saves it. The app shows and copies them, and does not log them |
 | Click **Check on it** or **Clear** on a black **maybe stale** card | Open its chat, or hide the warning on this Mac for 30 minutes (nothing is posted). The rest of a black card does nothing when clicked |
@@ -137,8 +137,8 @@ How to read the panel:
 | --- | --- |
 | An indigo card, **?** face and **needs you · 5m ago** (or **approve**) | The bot is waiting on you, and has been for that long. **approve** means the post set `approval`. It sits at the very top and never turns stale |
 | An orange card with a timer | The bot is working, and has been for that long |
-| A black card, **404** face and **maybe stale · 34m** | The bot said "working" but hasn't posted for 30 minutes or more. The task may be old. See [A bot shows maybe stale](#a-bot-shows-maybe-stale-or-an-old-task) |
-| **stale?** on a card | It has said "working" for over an hour. It probably forgot to say "done" |
+| A black card, **404** face and **maybe stale · 34m** | The bot said "working" but hasn't posted for 30 minutes or more. A long job that keeps posting stays orange. See [A bot shows maybe stale](#a-bot-shows-maybe-stale-or-an-old-task) |
+| **stale?** on a card | It still says "working", and hasn't posted for over an hour. It probably forgot to say "done" |
 | `· 12m ago` at the end of a row | When that bot last posted. For done and failed, when the job ended |
 | A red row and **Failed** | The bot's last job failed |
 | A green check by the name | The bot finished its last job |
@@ -151,9 +151,11 @@ While a bot is working, the cube bobs, and every few seconds does a little move:
 
 A bot that posts `needs_input` gets the indigo card at the top of the panel, and the menu bar cube shows a still **?**. Red still wins if another bot has failed.
 
-**Sound alert when a bot needs you** is on. The moment a bot starts waiting, the Mac speaks "<Bot> needs you", or "<Bot> needs your approval" when the post sets `approval`. It uses the same voice as the failure alert, and it speaks once for that change. The task line should still say exactly what is needed, because that is what you read on the card.
+**Sound alert when a bot needs you** is off until you turn it on. The moment a bot starts waiting, the Mac speaks "<Bot> needs you", or "<Bot> needs your approval" when the post sets `approval`. It uses the same voice as the failure alert, and it speaks once for that change. The task line should still say exactly what is needed, because that is what you read on the card.
 
-**Remind every** is Off. Set it to 2, 5, 10 or 15 minutes and, while the sound alert is on, the Mac repeats the spoken line until that bot posts a different state. Several waiting bots share one spoken line.
+The spoken line does not check Focus or Do Not Disturb. macOS only lets an app read Focus status with a paid-developer entitlement, and this app is unsigned, so a spoken alert can play while Focus is on.
+
+**Remind every** is Off. Set it to 2, 5, 10 or 15 minutes and, while the sound alert is on, the Mac repeats the spoken line. It speaks at most 3 times for that waiting stretch, then stops until every waiting bot has moved on, or until a new bot starts waiting (that starts the 3 again, and waits a full interval before the first reminder). Several waiting bots share one spoken line.
 
 Switch the sound alert off and nothing is spoken.
 
@@ -214,7 +216,7 @@ After deploy, Cloudflare prints your feed's address, like `https://chief-status.
 
    It prints your feed's address, like `https://chief-status.<your-subdomain>.workers.dev`. Open it in a browser. You should see a short note that Chief Status is running.
 
-6. **Paste that address into the app** (click the cube → **Settings**), and paste the same password into **Post password**. Either the plain address or the same address ending in `/status` works. Then copy the bot prompt. Click **Send a test post** if you want to see a face light up before a real bot reports. The app then sets that Test bot to idle and removes it, so it does not stay on the feed and later turn into a **404**.
+6. **Paste that address into the app** (click the cube → **Settings**), and paste the same password into **Post password**. Either the plain address or the same address ending in `/status` works. Then copy the bot prompt. Click **Send a test post** if you want to see a face light up before a real bot reports. The app posts a bot named `ChiefStatusTest-<time>`, sets that same bot to idle, and removes it, so it does not stay on the feed.
 
 7. **Optional: lock the feed** so only your Mac can read it. See [Keep your feed private](#keep-your-feed-private). You can do this now or any time later.
 
@@ -395,7 +397,7 @@ Quick test that everything works end to end: post a `working` line by hand for a
 
 ## A bot shows maybe stale or an old task
 
-A black card with a **404** face and **maybe stale · 34m** means that bot said `working` and then posted nothing for 30 minutes. It is a hint, not an error. Usually the bot moved on to a new job, or finished, without posting.
+A black card with a **404** face and **maybe stale · 34m** means that bot said `working` and then posted nothing for 30 minutes. The 30 minutes are since the last post, not since the job started, so a long job that keeps posting stays orange. The time on an orange card is still how long the job has been running. It is a hint, not an error. Usually the bot moved on to a new job, or finished, without posting.
 
 - **It is on a new job.** Ask it to post the new task. The card goes back to its colour at once and the timer restarts:
 
@@ -404,8 +406,8 @@ A black card with a **404** face and **maybe stale · 34m** means that bot said 
   ```
 
 - **It finished.** Ask it to post `done`, then `idle`.
-- **It really is still on one long job.** That's fine. The card stays black until the bot posts again. Bots that post at the start of every task, as in [Teach your bots to report](#teach-your-bots-to-report), rarely hit 30 minutes.
-- **It went back to its colour on its own and then black again?** The bot is posting without `started_at`. Use `post-status.sh`, which sends it on every `working` post. A raw `working` post without it keeps the old clock.
+- **It really is still on one long job.** That's fine. Posting again, even with the original `started_at`, clears the 404, because the feed records when the post arrived. Bots that post at the start of every task, as in [Teach your bots to report](#teach-your-bots-to-report), rarely hit 30 minutes.
+- **An older app still on 1.4** uses `started_at` for this clock. This app uses `last_posted_at` when the feed sends it, and `started_at` when it does not, so an older Worker keeps the 1.4 rule until you update it.
 
 - **Know it's fine?** Click **Clear** on the card. The warning is hidden on this Mac only; the bot still shows as working, with **last update 36m ago**. It comes back if the bot stays quiet for another 30 minutes. It resets when the bot posts again. **Check on it** opens the bot's chat.
 - **It really is idle?** Ask the bot to post `idle`, or post it by hand (see [Post a status by hand](#post-a-status-by-hand)).
@@ -438,7 +440,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether failure alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file. Needs-you alerts are not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you sound settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouSound` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The two sound keys are the only new values stored on this Mac: the sound alert defaults to on, and the reminder defaults to off. Nothing else new is saved. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
+The **Appearance** choice, the **Icon colour**, the optional **Read token**, and the needs-you sound settings are kept in the app's private preferences (`com.chiefstatus.menubar`). The keys are `appearance`, `iconColor`, `readToken`, `needsYouSound` and `needsYouReminderMinutes`. `iconColor` is `default` or a `#RRGGBB` colour. The two sound keys are the only new values stored on this Mac: the sound alert defaults to off, and the reminder defaults to off. Nothing else new is saved. **Check for updates** stores nothing. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. A setup link can carry the same token and, when it does, opening the link writes `readToken`. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link. Switching the feed address clears the app's memory of which bots were already waiting or had just failed, so the new feed does not speak for bots that were already in that state.
 
 What is stored in your feed, on your own Cloudflare account:
 
@@ -497,7 +499,7 @@ cd chief-status
 ./install.sh
 ```
 
-That builds the app with Apple's free Command Line Tools, puts **Chief Status** in `~/Applications`, opens it, and sets it to open every time you log in. If macOS asks you to install the Command Line Tools, click **Install**, wait for it to finish, then run `./install.sh` again.
+That builds the app with Apple's free Command Line Tools, puts **Chief Status** in `~/Applications`, and opens it. It does not register a login item. Open at login is **Settings → Open at login**. If an older `./install.sh` left `~/Library/LaunchAgents/com.chiefstatus.menubar.plist`, this script removes it, and so does the app. If macOS asks you to install the Command Line Tools, click **Install**, wait for it to finish, then run `./install.sh` again.
 
 If you already have your feed address, you can give it straight away:
 
@@ -525,7 +527,7 @@ Feed settings live in `worker/wrangler.toml` under `[vars]`. The password is a s
 | `BOTS` | `wrangler.toml` | Optional starter list and order of bots. It ships empty, so a new feed has no rows. Bots that post are added anyway. `Agent1\|https://example.com/agent1` adds a starter link |
 | `BOT_URLS` | `wrangler.toml` | Optional starter chat links, like `Agent1=https://example.com/agent1` |
 | `TZ` | `wrangler.toml`, or the dashboard after the deploy button | Your time zone, like `America/Los_Angeles` or `Asia/Shanghai`. Decides when "today" resets. `./scripts/set-tz.sh` writes it. Default `UTC` |
-| `STALE_MINUTES` | `wrangler.toml` | How long a bot can say "working" before it's marked **stale?**. Default `60` |
+| `STALE_MINUTES` | `wrangler.toml` | How long a working bot can go without a post before it's marked **stale?**. Default `60` |
 | `STATUS_TOKEN` | `npx wrangler secret put STATUS_TOKEN`, or the dashboard | The password bots use to post. Never put it in a file |
 | `READ_TOKEN` | `npx wrangler secret put READ_TOKEN`, or the dashboard | Optional. When set, `GET /status` and the live feed need `Authorization: Bearer <token>`. The live feed also accepts `?token=`. When unset, reading stays open |
 

@@ -821,6 +821,85 @@ async function main() {
 			"jobs older than the cap should be dropped",
 		);
 
+		const oldStart = "2020-01-01T00:00:00Z";
+		const postedAt = Date.now();
+		const longJob = await postStatus({
+			bot: "QuietBot",
+			status: "working",
+			task: "long job",
+			started_at: oldStart,
+		});
+		assert(longJob.status === 200, `long job ${longJob.status} ${JSON.stringify(longJob.body)}`);
+		assert(longJob.body.bot.started_at === "2020-01-01T00:00:00.000Z", "an old job start is kept");
+		const lastPosted = Date.parse(longJob.body.bot.last_posted_at);
+		assert(
+			Math.abs(lastPosted - postedAt) < 15000,
+			`last_posted_at should be this post, was ${longJob.body.bot.last_posted_at}`,
+		);
+		const stillGoing = await postStatus({
+			bot: "QuietBot",
+			status: "working",
+			task: "still the long job",
+		});
+		assert(stillGoing.status === 200, `repeat working ${stillGoing.status}`);
+		assert(
+			stillGoing.body.bot.started_at === "2020-01-01T00:00:00.000Z",
+			"a repeat working post keeps the job start",
+		);
+		assert(
+			Date.parse(stillGoing.body.bot.last_posted_at) >= lastPosted,
+			"a repeat working post refreshes last_posted_at",
+		);
+		await postStatus({ bot: "QuietBot", status: "idle", task: "" });
+		const resumedAt = Date.now();
+		const resumed = await postStatus({ bot: "QuietBot", status: "working", task: "new job" });
+		assert(resumed.status === 200, `resume working ${resumed.status}`);
+		assert(
+			Math.abs(Date.parse(resumed.body.bot.started_at) - resumedAt) < 15000,
+			`working with no started_at, after a non-working row, starts now, was ${resumed.body.bot.started_at}`,
+		);
+		assert(
+			Math.abs(Date.parse(resumed.body.bot.last_posted_at) - resumedAt) < 15000,
+			`last_posted_at on that post was ${resumed.body.bot.last_posted_at}`,
+		);
+		const listedQuiet = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "QuietBot");
+		assert(listedQuiet.last_posted_at === resumed.body.bot.last_posted_at, "GET should return last_posted_at");
+
+		const noZone = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: "2026-01-01T10:00:00",
+		});
+		assert(noZone.status === 400, `started_at without a time zone should be 400, was ${noZone.status}`);
+		const zoned = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: "2026-01-01T10:00:00+08:00",
+		});
+		assert(zoned.status === 200, `offset started_at ${zoned.status} ${JSON.stringify(zoned.body)}`);
+		assert(
+			zoned.body.bot.started_at === "2026-01-01T02:00:00.000Z",
+			`offset should be normalized, was ${zoned.body.bot.started_at}`,
+		);
+		const soon = new Date(Date.now() + 60 * 1000).toISOString();
+		const almostNow = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: soon,
+		});
+		assert(almostNow.status === 200, `started_at one minute ahead should be accepted, was ${almostNow.status}`);
+		const ahead = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+		const tooFar = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: ahead,
+		});
+		assert(tooFar.status === 400, `started_at more than 2 minutes ahead should be 400, was ${tooFar.status}`);
+
 		console.log("feed tests passed");
 	} finally {
 		await worker.stop();

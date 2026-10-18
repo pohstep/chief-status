@@ -90,7 +90,8 @@ export function parsePost(
 		if (!parsed) {
 			return {
 				ok: false,
-				error: "started_at must be an ISO date, like 2026-10-18T10:00:00Z",
+				error:
+					"started_at must be an ISO date with a time zone, like 2026-10-18T10:00:00Z, and cannot be more than 2 minutes ahead",
 			};
 		}
 		started = parsed;
@@ -158,10 +159,22 @@ export function cleanTask(value: string): string | null {
 	return task;
 }
 
-export function parseStartedAt(value: unknown): string | null {
-	if (typeof value !== "string" || value.trim() === "") return null;
-	const ms = Date.parse(value);
+const STARTED_AT_ZONE = /(?:Z|[+-]\d{2}:\d{2}|[+-]\d{4})$/i;
+/** A client clock may run this far ahead of the worker. Further ahead is rejected. */
+const STARTED_AT_FUTURE_MS = 2 * 60 * 1000;
+
+/**
+ * ISO-8601 with an explicit time zone (Z or a numeric offset).
+ * A value with no zone is rejected, because Date.parse would guess.
+ * More than two minutes in the future is rejected.
+ */
+export function parseStartedAt(value: unknown, now = Date.now()): string | null {
+	if (typeof value !== "string") return null;
+	const text = value.trim();
+	if (!text || !STARTED_AT_ZONE.test(text)) return null;
+	const ms = Date.parse(text);
 	if (Number.isNaN(ms)) return null;
+	if (ms > now + STARTED_AT_FUTURE_MS) return null;
 	return new Date(ms).toISOString();
 }
 

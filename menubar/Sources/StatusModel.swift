@@ -12,6 +12,8 @@ struct Bot: Decodable, Identifiable {
     let color: String?
     /// True when this needs_input post is an approval. Older feeds omit it, which means false.
     let approval: Bool
+    /// When the worker last accepted a post for this bot. Nil on an older feed, which still uses startedAt.
+    let lastPostedAt: String?
     /// From the local links.json. Used only when the feed has no url for this bot.
     var localURL: String?
     /// Set by Clear on this Mac: the maybe-stale warning is hidden until then, unless the bot posts again first.
@@ -33,19 +35,31 @@ struct Bot: Decodable, Identifiable {
         return parsed
     }
 
+    /// Clock for the 404 and stale? marks. last_posted_at wins when the feed sends it.
+    /// An older feed leaves it out, and the app uses started_at, as in 1.4.
+    func freshnessDate() -> Date? {
+        if let posted = lastPostedAt {
+            if let date = ISODate.date(from: posted) {
+                return date
+            }
+        }
+        return ISODate.date(from: startedAt)
+    }
+
     func isStale(now: Date, afterMinutes: Int) -> Bool {
-        guard status == "working", let start = ISODate.date(from: startedAt) else { return false }
+        guard status == "working", let start = freshnessDate() else { return false }
         return now.timeIntervalSince(start) >= Double(afterMinutes) * 60
     }
 
-    /// A working bot with no new post for StaleRule.fadeAfterMinutes. Re-posting working resets started_at, so this clears at once.
+    /// A working bot with no new post for StaleRule.fadeAfterMinutes.
+    /// A feed that sends last_posted_at measures that from the last post, not the job start.
     func isFaded(now: Date, staleAfterMinutes: Int) -> Bool {
         if isQuieted(now: now) { return false }
         return isStale(now: now, afterMinutes: StaleRule.fadeMinutes(staleAfterMinutes: staleAfterMinutes))
     }
 
     /// When this bot last posted. Done and failed use the newest ended_at for it in today's list,
-    /// because started_at keeps the working start. Anything else, or no entry today, uses started_at.
+    /// because started_at keeps the working start. Anything else uses last_posted_at when the feed sends it.
     func lastPostDate(today: [FinishedJob]) -> Date? {
         if status == "done" || status == "failed" {
             var newest: Date?
@@ -59,7 +73,7 @@ struct Bot: Decodable, Identifiable {
                 return newest
             }
         }
-        return ISODate.date(from: startedAt)
+        return freshnessDate()
     }
 
     enum CodingKeys: String, CodingKey {
@@ -70,9 +84,10 @@ struct Bot: Decodable, Identifiable {
         case color
         case approval
         case startedAt = "started_at"
+        case lastPostedAt = "last_posted_at"
     }
 
-    init(bot: String, status: String, task: String, startedAt: String, url: String? = nil, color: String? = nil, approval: Bool = false) {
+    init(bot: String, status: String, task: String, startedAt: String, url: String? = nil, color: String? = nil, approval: Bool = false, lastPostedAt: String? = nil) {
         self.bot = bot
         self.status = status
         self.task = task
@@ -80,6 +95,7 @@ struct Bot: Decodable, Identifiable {
         self.url = url
         self.color = color
         self.approval = approval
+        self.lastPostedAt = lastPostedAt
         self.localURL = nil
         self.quietUntil = nil
     }
@@ -103,6 +119,9 @@ struct Bot: Decodable, Identifiable {
             }
         }
         approval = flag
+        let rawPosted = try container.decodeIfPresent(String.self, forKey: .lastPostedAt) ?? ""
+        let trimmedPosted = rawPosted.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastPostedAt = trimmedPosted.isEmpty ? nil : trimmedPosted
         localURL = nil
         quietUntil = nil
     }
@@ -230,17 +249,17 @@ final class StatusModel: ObservableObject {
     @Published var updateNote = ""
     @Published var updateAvailable = false
     @Published var updatePage: URL?
-    /// Spoken line when a bot starts waiting. On by default. Stored in UserDefaults, not config.plist.
-    @Published var needsYouSound = true
+    /// Spoken line when a bot starts waiting. Off until Settings turns it on. Stored in UserDefaults, not config.plist.
+    @Published var needsYouSound = false
     /// Sound-only repeat. Off until the user picks 2, 5, 10 or 15 minutes.
     @Published var needsYouReminderMinutes = 0
 
     /// What the feed sent. `bots` is this plus local links and local Clear.
     private var feedBots: [Bot] = []
     private var links: [String: String] = [:]
-    /// Bot name → its started_at when Clear was clicked, and when. Memory only.
-    /// A new started_at drops the entry; so does another fade window (30 min) after the click.
-    private var cleared: [String: (startedAt: String, at: Date)] = [:]
+    /// Bot name → the clocks when Clear was clicked, and when. Memory only.
+    /// A new post (started_at or last_posted_at) drops the entry; so does another fade window after the click.
+    private var cleared: [String: (startedAt: String, postedAt: String, at: Date)] = [:]
 
     var onChange: (() -> Void)?
     /// Every second. The menu bar uses it so a bot can turn stale without a new post.
@@ -254,6 +273,11 @@ final class StatusModel: ObservableObject {
     private var knownStatus: [String: String] = [:]
     private var hasBaseline = false
     private var reminderTimer: Timer?
+    /// Spoken reminders already played in this waiting episode. A new bot that starts waiting resets it.
+    private var reminderFired = 0
+    /// When each bot last had its failure spoken. Memory only. 10 minutes per bot.
+    private var failureSpokenAt: [String: Date] = [:]
+    private let failureCooldown: TimeInterval = 10 * 60
     private let userAgent = "ChiefStatus/1.5.0"
     private var liveTask: URLSessionWebSocketTask?
     private var liveConnected = false
@@ -293,8 +317,10 @@ final class StatusModel: ObservableObject {
         appearance = AppearanceChoice.stored()
         iconColor = IconColorSetting.load()
         readToken = ReadTokenStore.read()
+        LegacyLaunchAgent.removeIfPresent()
         openAtLogin = LoginItem.isEnabled()
-        needsYouSound = NeedsYouSettings.storedBool(NeedsYouSettings.soundKey, fallback: true)
+        // Notification permission is not asked here. The failure banner asks only when that switch is turned on.
+        needsYouSound = NeedsYouSettings.storedBool(NeedsYouSettings.soundKey, fallback: false)
         needsYouReminderMinutes = NeedsYouSettings.storedReminder()
         links = ConfigStore.readLinks()
         refresh()
@@ -347,6 +373,7 @@ final class StatusModel: ObservableObject {
             return
         }
         ConfigStore.write(feedURL: normalized)
+        noteFeedAddress(normalized)
         draftURL = normalized
         editingAddress = false
         setupError = nil
@@ -400,7 +427,7 @@ final class StatusModel: ObservableObject {
         editingAddress = true
         if let normalized = ConfigStore.normalize(parsed.feed) {
             ConfigStore.write(feedURL: normalized)
-            feedURL = normalized
+            noteFeedAddress(normalized)
             draftURL = normalized
             setupError = nil
             notify()
@@ -447,7 +474,7 @@ final class StatusModel: ObservableObject {
             return
         }
         ConfigStore.write(feedURL: normalized)
-        feedURL = normalized
+        noteFeedAddress(normalized)
         draftURL = normalized
         sendingTest = true
         setupError = nil
@@ -455,7 +482,8 @@ final class StatusModel: ObservableObject {
         testNote = "Sending…"
         notify()
 
-        let working = ["bot": "Test", "status": "working", "task": "test post"]
+        let name = "ChiefStatusTest-\(Int(Date().timeIntervalSince1970))"
+        let working = ["bot": name, "status": "working", "task": "test post"]
         postJSON(url: url, payload: working) { [weak self] status in
             guard let self = self else { return }
             if status == 200 {
@@ -465,7 +493,7 @@ final class StatusModel: ObservableObject {
                 self.notify()
                 self.refresh()
                 self.connectLive()
-                self.finishTestPost(at: url)
+                self.finishTestPost(at: url, name: name)
             } else {
                 self.sendingTest = false
                 self.testNote = nil
@@ -482,12 +510,12 @@ final class StatusModel: ObservableObject {
         }
     }
 
-    /// The working test already landed. Post Test as idle, then DELETE /status/Test, so it cannot sit there and turn into a 404.
-    private func finishTestPost(at url: URL) {
-        let idle = ["bot": "Test", "status": "idle", "task": ""]
+    /// The working test already landed. Post that bot as idle, then delete only that name.
+    private func finishTestPost(at url: URL, name: String) {
+        let idle = ["bot": name, "status": "idle", "task": ""]
         postJSON(url: url, payload: idle) { [weak self] _ in
             guard let self = self else { return }
-            self.removeTestBot(feed: url) { removed in
+            self.removeTestBot(feed: url, name: name) { removed in
                 self.sendingTest = false
                 if removed {
                     self.setupError = nil
@@ -496,7 +524,7 @@ final class StatusModel: ObservableObject {
                 } else {
                     self.editingAddress = true
                     self.testNote = nil
-                    self.setupError = "Test is still on the feed. Run ./scripts/delete-bot.sh Test"
+                    self.setupError = "\(name) is still on the feed. Run ./worker/scripts/delete-bot.sh \(name)"
                 }
                 self.notify()
                 self.refresh()
@@ -584,7 +612,7 @@ final class StatusModel: ObservableObject {
         send(authedRequest(url: url, method: "POST", body: body), done: done)
     }
 
-    private func removeTestBot(feed: URL, done: @escaping (Bool) -> Void) {
+    private func removeTestBot(feed: URL, name: String, done: @escaping (Bool) -> Void) {
         guard var components = URLComponents(url: feed, resolvingAgainstBaseURL: false) else {
             done(false)
             return
@@ -593,7 +621,8 @@ final class StatusModel: ObservableObject {
         while path.hasSuffix("/") {
             path.removeLast()
         }
-        path += "/Test"
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        path += "/\(encoded)"
         components.path = path
         guard let target = components.url else {
             done(false)
@@ -663,7 +692,7 @@ final class StatusModel: ObservableObject {
             reminderTimer?.invalidate()
             reminderTimer = nil
         } else {
-            armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" })
+            armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" }, restartTimer: false)
         }
         notify()
     }
@@ -674,7 +703,7 @@ final class StatusModel: ObservableObject {
         UserDefaults.standard.set(next, forKey: NeedsYouSettings.reminderKey)
         reminderTimer?.invalidate()
         reminderTimer = nil
-        armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" })
+        armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" }, restartTimer: true)
         notify()
     }
 
@@ -711,7 +740,7 @@ final class StatusModel: ObservableObject {
     /// "Clear" on a maybe-stale card. Local only, nothing is posted: the bot stays working and the
     /// 404 warning is hidden for another fade window, or until the bot posts again and later goes quiet.
     func clearLocally(_ bot: Bot) {
-        cleared[bot.bot] = (startedAt: bot.startedAt, at: Date())
+        cleared[bot.bot] = (startedAt: bot.startedAt, postedAt: bot.lastPostedAt ?? "", at: Date())
         rebuildBots()
         notify()
     }
@@ -726,7 +755,12 @@ final class StatusModel: ObservableObject {
         let window = Double(StaleRule.fadeMinutes(staleAfterMinutes: staleAfterMinutes)) * 60
         cleared = cleared.filter { name, entry in
             Date().timeIntervalSince(entry.at) < window
-                && feedBots.contains { $0.bot == name && $0.startedAt == entry.startedAt && $0.status == "working" }
+                && feedBots.contains { bot in
+                    bot.bot == name
+                        && bot.startedAt == entry.startedAt
+                        && (bot.lastPostedAt ?? "") == entry.postedAt
+                        && bot.status == "working"
+                }
         }
         bots = feedBots.map { source in
             var bot = source
@@ -747,7 +781,7 @@ final class StatusModel: ObservableObject {
     func refresh() {
         ConfigStore.ensureDirectory()
         let raw = ConfigStore.readFeedURL() ?? ""
-        feedURL = raw
+        noteFeedAddress(raw)
         links = ConfigStore.readLinks()
 
         guard !ConfigStore.needsSetup(raw) else {
@@ -771,9 +805,11 @@ final class StatusModel: ObservableObject {
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         applyReadToken(&request)
         task?.cancel()
+        let requested = raw
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
-                self?.apply(data: data, response: response, error: error)
+                guard let self = self, self.feedURL == requested else { return }
+                self.apply(data: data, response: response, error: error)
             }
         }
         self.task = task
@@ -831,44 +867,87 @@ final class StatusModel: ObservableObject {
         errorText = nil
     }
 
+    /// A different feed must not speak for bots that were already waiting on the previous one.
+    private func noteFeedAddress(_ raw: String) {
+        if raw != feedURL {
+            knownStatus = [:]
+            hasBaseline = false
+            failureSpokenAt = [:]
+            reminderFired = 0
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+            cleared = [:]
+        }
+        feedURL = raw
+    }
+
     private func noteTransitions(_ bots: [Bot]) {
+        var entered: [Bot] = []
         if hasBaseline {
             if alertOnFailure {
                 let fresh = bots.filter { bot in
                     bot.status == "failed" && knownStatus[bot.bot] != "failed"
                 }
                 if !fresh.isEmpty {
-                    AlertCenter.announceFailures(fresh)
+                    announceFailures(fresh)
                 }
             }
-            if needsYouSound {
-                var entered: [Bot] = []
-                for bot in bots where bot.status == "needs_input" {
-                    if knownStatus[bot.bot] != "needs_input" {
-                        entered.append(bot)
-                    }
+            for bot in bots where bot.status == "needs_input" {
+                if knownStatus[bot.bot] != "needs_input" {
+                    entered.append(bot)
                 }
-                if !entered.isEmpty {
-                    FailureSpeaker.shared.speak(entered.map { needsYouPhrase($0) })
-                }
+            }
+            if needsYouSound && !entered.isEmpty {
+                FailureSpeaker.shared.speak(entered.map { needsYouPhrase($0) })
             }
         }
         knownStatus = Dictionary(uniqueKeysWithValues: bots.map { ($0.bot, $0.status) })
         hasBaseline = true
-        armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" })
+        let waiting = bots.contains { $0.status == "needs_input" }
+        if !waiting {
+            reminderFired = 0
+            armNeedsYouReminder(waiting: false, restartTimer: true)
+        } else if !entered.isEmpty {
+            reminderFired = 0
+            armNeedsYouReminder(waiting: true, restartTimer: true)
+        } else {
+            armNeedsYouReminder(waiting: true, restartTimer: false)
+        }
     }
 
-    /// Sound only. Off, the sound toggle off, or nobody waiting, stops the timer.
-    private func armNeedsYouReminder(waiting: Bool) {
-        if !waiting || !needsYouSound || needsYouReminderMinutes <= 0 {
+    /// Banner for every new failure. The spoken line waits 10 minutes per bot.
+    private func announceFailures(_ bots: [Bot]) {
+        let now = Date()
+        var speakable: [Bot] = []
+        for bot in bots {
+            var allowed = true
+            if let last = failureSpokenAt[bot.bot] {
+                if now.timeIntervalSince(last) < failureCooldown {
+                    allowed = false
+                }
+            }
+            if allowed {
+                failureSpokenAt[bot.bot] = now
+                speakable.append(bot)
+            }
+        }
+        AlertCenter.announceFailures(bots, speak: speakable)
+    }
+
+    /// Sound only. Off, the sound toggle off, nobody waiting, or 3 reminders already spoken, stops the timer.
+    /// restartTimer drops a running timer so a new waiter does not get a reminder seconds after the first line.
+    private func armNeedsYouReminder(waiting: Bool, restartTimer: Bool) {
+        if !waiting || !needsYouSound || needsYouReminderMinutes <= 0 || reminderFired >= NeedsYouSettings.reminderCap {
             reminderTimer?.invalidate()
             reminderTimer = nil
             return
         }
-        if let timer = reminderTimer, timer.isValid {
-            let wanted = TimeInterval(needsYouReminderMinutes * 60)
-            if abs(timer.timeInterval - wanted) < 0.5 {
-                return
+        if !restartTimer {
+            if let timer = reminderTimer, timer.isValid {
+                let wanted = TimeInterval(needsYouReminderMinutes * 60)
+                if abs(timer.timeInterval - wanted) < 0.5 {
+                    return
+                }
             }
         }
         reminderTimer?.invalidate()
@@ -882,15 +961,16 @@ final class StatusModel: ObservableObject {
     }
 
     private func fireNeedsYouReminder() {
-        if !needsYouSound {
-            armNeedsYouReminder(waiting: false)
+        if !needsYouSound || reminderFired >= NeedsYouSettings.reminderCap {
+            armNeedsYouReminder(waiting: false, restartTimer: true)
             return
         }
         let waiting = bots
             .filter { $0.status == "needs_input" }
             .sorted { $0.bot.localizedCaseInsensitiveCompare($1.bot) == .orderedAscending }
         if waiting.isEmpty {
-            armNeedsYouReminder(waiting: false)
+            reminderFired = 0
+            armNeedsYouReminder(waiting: false, restartTimer: true)
             return
         }
         let line: String
@@ -900,6 +980,11 @@ final class StatusModel: ObservableObject {
             line = waiting.map { needsYouPhrase($0) }.joined(separator: ". ")
         }
         FailureSpeaker.shared.speak([line])
+        reminderFired += 1
+        if reminderFired >= NeedsYouSettings.reminderCap {
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+        }
     }
 
     private func needsYouPhrase(_ bot: Bot) -> String {
@@ -1071,8 +1156,10 @@ private enum AlertCenter {
         }
     }
 
-    static func announceFailures(_ bots: [Bot]) {
-        FailureSpeaker.shared.speak(bots.map { "\($0.bot) task failed" })
+    static func announceFailures(_ bots: [Bot], speak: [Bot]) {
+        if !speak.isEmpty {
+            FailureSpeaker.shared.speak(speak.map { "\($0.bot) task failed" })
+        }
         let content = UNMutableNotificationContent()
         content.title = "An agent failed"
         if bots.count == 1 {

@@ -753,7 +753,7 @@ private struct WorkingCard: View {
             Circle()
                 .strokeBorder(PanelTheme.lostInk2, lineWidth: 1.3)
                 .frame(width: 7, height: 7)
-            Text(isStale ? "stale? · \(elapsedText)" : "maybe stale · \(elapsedText)")
+            Text(isStale ? "stale? · \(quietElapsed)" : "maybe stale · \(quietElapsed)")
                 .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(PanelTheme.lostInk)
                 .lineLimit(1)
@@ -836,7 +836,7 @@ private struct WorkingCard: View {
     }
 
     private var freshPillText: String {
-        if isQuieted, let start = ISODate.date(from: bot.startedAt) {
+        if isQuieted, let start = bot.freshnessDate() {
             return "last update \(ago(since: start, now: now))"
         }
         return isStale ? "stale?" : elapsedText
@@ -854,17 +854,23 @@ private struct WorkingCard: View {
         return trimmed.isEmpty ? "Working" : trimmed
     }
 
+    /// How long the job has been running. The 404 clock is quietElapsed, from the last post.
     private var elapsedText: String {
         guard let start = ISODate.date(from: bot.startedAt) else { return "" }
         return elapsed(since: start, now: now)
     }
 
+    private var quietElapsed: String {
+        guard let start = bot.freshnessDate() else { return "" }
+        return elapsed(since: start, now: now)
+    }
+
     private var accessibilityText: String {
         var label = "\(bot.bot), working, \(taskLine)"
-        if isFaded, let start = ISODate.date(from: bot.startedAt) {
+        if isFaded, let start = bot.freshnessDate() {
             label += ", last update \(spokenAgo(since: start, now: now))"
             label += isStale ? ", stale" : ", maybe stale"
-        } else if isQuieted, let start = ISODate.date(from: bot.startedAt) {
+        } else if isQuieted, let start = bot.freshnessDate() {
             label += ", last update \(spokenAgo(since: start, now: now)), warning cleared"
         } else if !elapsedText.isEmpty {
             label += ", for \(elapsedText)"
@@ -1827,7 +1833,7 @@ private struct NeedsYouSettingsSection: View {
             .toggleStyle(.switch)
             .controlSize(.small)
             reminderRow
-            Text("Speaks once when a bot starts waiting. A reminder, if you turn one on, repeats that spoken line and nothing else.")
+            Text("Off until you turn it on. Speaks once when a bot starts waiting. It does not check Focus. A reminder speaks at most 3 times, then stops until a new bot starts waiting.")
                 .font(.system(size: 11))
                 .foregroundStyle(PanelTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)

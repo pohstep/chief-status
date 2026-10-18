@@ -8,9 +8,10 @@
 #   ./post-status.sh Agent1 working "drafting the homepage"
 #   ./post-status.sh Agent1 needs_input "approve the homepage copy" --approval
 #
-# started_at is sent for "working" and "needs_input", so the clock starts at this post.
-# done, failed and idle let the feed keep the clock from the working post, which is
-# what today's durations are based on.
+# started_at is sent for "working" and "needs_input". It is the job clock.
+# The feed records last_posted_at itself, and the 404 uses that, so a long job
+# that keeps posting does not go black. done, failed and idle let the feed keep
+# the job clock, which is what today's durations are based on.
 #
 # STATUS is one of: idle, working, failed, done, needs_input
 #   needs_input means the bot is waiting on you.

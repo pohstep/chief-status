@@ -8,9 +8,9 @@ Paste the body below into the GitHub release. Fill in the SHA-256 when `./packag
 
 What's new:
 
-- **A sound when a bot needs you.** When a bot posts `needs_input`, the Mac speaks "<Bot> needs your approval" or "<Bot> needs you", once, if **Sound alert when a bot needs you** is on. That switch is on by default. A sound-only reminder is off until you set 2, 5, 10 or 15 minutes.
-- **The menu bar cube is unchanged.** A bot that needs you still shows the still **?** cube. Red still wins when a bot has failed.
-- **Send a test post** lights the panel, then removes the Test bot so it does not stay on the feed.
+- **A sound when a bot needs you.** When a bot posts `needs_input`, the Mac speaks "<Bot> needs your approval" or "<Bot> needs you", once, if **Sound alert when a bot needs you** is on. That switch is off until you turn it on. A sound-only reminder is off until you set 2, 5, 10 or 15 minutes, and then it speaks at most 3 times.
+- **The menu bar cube is unchanged.** A bot that needs you still shows the still **?** cube. Red still wins when a bot has failed. A working bot goes black only after 30 minutes without a post, not 30 minutes after the job started.
+- **Send a test post** lights the panel, then removes that one `ChiefStatusTest-<time>` bot so it does not stay on the feed.
 - **A locked feed can be set up from the link.** `chiefstatus://setup?feed=…&password=…&token=…` saves the read token. You can also add `READ_TOKEN` in the Cloudflare dashboard, with no Terminal.
 - **About → Check for updates** compares this app with the latest GitHub release when you click it.
 
