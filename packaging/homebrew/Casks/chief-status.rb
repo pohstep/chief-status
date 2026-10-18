@@ -1,8 +1,8 @@
 cask "chief-status" do
-  version "1.4.0"
+  version "1.5.0"
 
-  # SHA-256 of Chief-Status-1.4.0.dmg as attached to the v1.4.0 GitHub release.
-  sha256 "a3990defd9da19b9542ae465e01e0ebbe0b43f2cbe66aa6bb8f8ebb13e2fad6b"
+  # SHA-256 of Chief-Status-1.5.0.dmg on the v1.5.0 release.
+  sha256 "09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e"
   url "https://github.com/pohstep/chief-status/releases/download/v#{version}/Chief-Status-#{version}.dmg"
 
   name "Chief Status"
@@ -13,6 +13,9 @@ cask "chief-status" do
 
   app "Chief Status.app"
 
+  # Quit the app first, then remove it.
+  uninstall quit: "com.chiefstatus.menubar"
+
   zap trash: [
     "~/Library/Application Support/Chief Status",
     "~/Library/Preferences/com.chiefstatus.menubar.plist",
@@ -20,9 +23,11 @@ cask "chief-status" do
 
   caveats <<~EOS
     Chief Status is not signed with an Apple developer account.
-    The first time macOS blocks it, allow it once:
+    The first time macOS blocks it, allow it once.
 
-      Open Anyway in System Settings → Privacy & Security
+    macOS 15 or newer: System Settings → Privacy & Security → Open Anyway.
+
+    macOS 13 or 14: in Applications, right-click Chief Status, choose Open, then Open again.
 
     Or, in Terminal:
 

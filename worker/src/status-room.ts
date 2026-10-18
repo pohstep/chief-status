@@ -21,6 +21,10 @@ export type BotRow = {
 	started_at: string;
 	url: string;
 	color: string;
+	/** True only while status is needs_input and the bot asked for an approval. */
+	approval: boolean;
+	/** When this row was last posted, set by the worker. Empty on a row that has not posted since the column was added. */
+	last_posted_at: string;
 };
 
 export type JobRow = {
@@ -70,22 +74,28 @@ export class StatusRoom extends DurableObject<Env> {
 			started_at: this.resolveStarted(post, existing),
 			url,
 			color,
+			approval: post.status === "needs_input" && post.approval,
+			last_posted_at: new Date().toISOString(),
 		};
 		this.ctx.storage.sql.exec(
-			`INSERT INTO bots (name, status, task, started_at, url, color)
-			 VALUES (?, ?, ?, ?, ?, ?)
+			`INSERT INTO bots (name, status, task, started_at, url, color, approval, last_posted_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(name) DO UPDATE SET
 			   status = excluded.status,
 			   task = excluded.task,
 			   started_at = excluded.started_at,
 			   url = excluded.url,
-			   color = excluded.color`,
+			   color = excluded.color,
+			   approval = excluded.approval,
+			   last_posted_at = excluded.last_posted_at`,
 			row.bot,
 			row.status,
 			row.task,
 			row.started_at,
 			row.url,
 			row.color,
+			row.approval ? 1 : 0,
+			row.last_posted_at,
 		);
 		if (isFinished(row.status)) {
 			this.recordJob(row);
@@ -152,7 +162,9 @@ export class StatusRoom extends DurableObject<Env> {
 				task TEXT NOT NULL,
 				started_at TEXT NOT NULL,
 				url TEXT NOT NULL DEFAULT '',
-				color TEXT NOT NULL DEFAULT ''
+				color TEXT NOT NULL DEFAULT '',
+				approval INTEGER NOT NULL DEFAULT 0,
+				last_posted_at TEXT NOT NULL DEFAULT ''
 			);
 			CREATE TABLE IF NOT EXISTS jobs (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -175,10 +187,26 @@ export class StatusRoom extends DurableObject<Env> {
 		if (!names.includes("color")) {
 			this.ctx.storage.sql.exec("ALTER TABLE bots ADD COLUMN color TEXT NOT NULL DEFAULT ''");
 		}
+		if (!names.includes("approval")) {
+			this.ctx.storage.sql.exec("ALTER TABLE bots ADD COLUMN approval INTEGER NOT NULL DEFAULT 0");
+		}
+		if (!names.includes("last_posted_at")) {
+			this.ctx.storage.sql.exec("ALTER TABLE bots ADD COLUMN last_posted_at TEXT NOT NULL DEFAULT ''");
+		}
 	}
 
-	/** A finish keeps the working row's clock. Anything else omitted becomes "now". */
+	/**
+	 * The job clock. A heartbeat keeps the stored start (or starts now if this bot is new)
+	 * and ignores any started_at on that post. last_posted_at still updates on every upsert.
+	 * A finish keeps the working row's start.
+	 * A working post that omits started_at, for a bot that was not already working, starts now.
+	 * A repeat of the same status keeps the stored start.
+	 */
 	private resolveStarted(post: IncomingPost, existing: BotRow | null): string {
+		if (post.heartbeat) {
+			if (existing?.started_at) return existing.started_at;
+			return new Date().toISOString();
+		}
 		if (isFinished(post.status) && existing?.status === "working" && existing.started_at) {
 			return existing.started_at;
 		}
@@ -264,14 +292,17 @@ export class StatusRoom extends DurableObject<Env> {
 			if (typeof record.status !== "string" || !isStatus(record.status)) {
 				return this.idle(fallbackName, "");
 			}
+			const started =
+				typeof record.started_at === "string" ? record.started_at : new Date().toISOString();
 			return {
 				bot: typeof record.bot === "string" && record.bot ? record.bot : fallbackName,
 				status: record.status,
 				task: typeof record.task === "string" ? record.task : "",
-				started_at:
-					typeof record.started_at === "string" ? record.started_at : new Date().toISOString(),
+				started_at: started,
 				url: typeof record.url === "string" ? record.url : "",
 				color: typeof record.color === "string" ? record.color : "",
+				approval: record.status === "needs_input" && record.approval === true,
+				last_posted_at: typeof record.last_posted_at === "string" ? record.last_posted_at : started,
 			};
 		} catch {
 			return this.idle(fallbackName, "");
@@ -279,32 +310,39 @@ export class StatusRoom extends DurableObject<Env> {
 	}
 
 	private idle(name: string, url: string): BotRow {
+		const now = new Date().toISOString();
 		return {
 			bot: name,
 			status: "idle",
 			task: "",
-			started_at: new Date().toISOString(),
+			started_at: now,
 			url,
 			color: "",
+			approval: false,
+			last_posted_at: now,
 		};
 	}
 
 	private writeBot(row: BotRow): void {
 		this.ctx.storage.sql.exec(
-			`INSERT INTO bots (name, status, task, started_at, url, color)
-			 VALUES (?, ?, ?, ?, ?, ?)
+			`INSERT INTO bots (name, status, task, started_at, url, color, approval, last_posted_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(name) DO UPDATE SET
 			   status = excluded.status,
 			   task = excluded.task,
 			   started_at = excluded.started_at,
 			   url = excluded.url,
-			   color = excluded.color`,
+			   color = excluded.color,
+			   approval = excluded.approval,
+			   last_posted_at = excluded.last_posted_at`,
 			row.bot,
 			row.status,
 			row.task,
 			row.started_at,
 			row.url,
 			row.color,
+			row.approval ? 1 : 0,
+			row.last_posted_at,
 		);
 	}
 
@@ -378,7 +416,9 @@ export class StatusRoom extends DurableObject<Env> {
 
 	private readSnapshot(): Snapshot {
 		const bots = (this.ctx.storage.sql
-			.exec("SELECT name, status, task, started_at, url, color FROM bots ORDER BY rowid")
+			.exec(
+				"SELECT name, status, task, started_at, url, color, approval, last_posted_at FROM bots ORDER BY rowid",
+			)
 			.toArray() as SqlRow[]).map((row) => this.asBot(row));
 		const day = dayKey(new Date(), this.zone());
 		const today = (this.ctx.storage.sql
@@ -398,6 +438,7 @@ export class StatusRoom extends DurableObject<Env> {
 
 	private asBot(row: SqlRow): BotRow {
 		const status = typeof row.status === "string" && isStatus(row.status) ? row.status : "idle";
+		const approval = status === "needs_input" && Number(row.approval) === 1;
 		return {
 			bot: String(row.name ?? ""),
 			status,
@@ -405,6 +446,8 @@ export class StatusRoom extends DurableObject<Env> {
 			started_at: typeof row.started_at === "string" ? row.started_at : "",
 			url: typeof row.url === "string" ? row.url : "",
 			color: typeof row.color === "string" ? row.color : "",
+			approval,
+			last_posted_at: typeof row.last_posted_at === "string" ? row.last_posted_at : "",
 		};
 	}
 
@@ -422,7 +465,10 @@ export class StatusRoom extends DurableObject<Env> {
 
 	private botRow(name: string): BotRow | null {
 		const rows = this.ctx.storage.sql
-			.exec("SELECT name, status, task, started_at, url, color FROM bots WHERE name = ?", name)
+			.exec(
+				"SELECT name, status, task, started_at, url, color, approval, last_posted_at FROM bots WHERE name = ?",
+				name,
+			)
 			.toArray() as SqlRow[];
 		const row = rows[0];
 		return row ? this.asBot(row) : null;

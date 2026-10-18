@@ -20,6 +20,16 @@ export type IncomingPost = {
 	url: string | null;
 	/** null means "leave the stored colour alone". */
 	color: string | null;
+	/**
+	 * True only when this post is needs_input and the bot is waiting on an approval.
+	 * Any other status stores false. Omitted means false.
+	 */
+	approval: boolean;
+	/**
+	 * A working heartbeat. The feed refreshes last_posted_at and keeps the stored started_at.
+	 * Omitted means false. Only valid with status working.
+	 */
+	heartbeat: boolean;
 };
 
 export function isStatus(value: string): value is Status {
@@ -79,13 +89,27 @@ export function parsePost(
 		return { ok: false, error: "task must be text, 200 characters or fewer" };
 	}
 
+	// A heartbeat is a working post that must not move the job clock.
+	// Any started_at on that post is ignored, including one the feed would otherwise reject.
+	let heartbeat = false;
+	if ("heartbeat" in body && body.heartbeat !== null && body.heartbeat !== undefined) {
+		if (typeof body.heartbeat !== "boolean") {
+			return { ok: false, error: "heartbeat must be true or false" };
+		}
+		if (body.heartbeat && body.status !== "working") {
+			return { ok: false, error: "heartbeat is only for a working post" };
+		}
+		heartbeat = body.heartbeat;
+	}
+
 	let started: string | null = null;
-	if ("started_at" in body && body.started_at !== null && body.started_at !== "") {
+	if (!heartbeat && "started_at" in body && body.started_at !== null && body.started_at !== "") {
 		const parsed = parseStartedAt(body.started_at);
 		if (!parsed) {
 			return {
 				ok: false,
-				error: "started_at must be an ISO date, like 2026-10-18T10:00:00Z",
+				error:
+					"started_at must be an ISO date with a time zone, like 2026-10-18T10:00:00Z, and cannot be more than 2 minutes ahead",
 			};
 		}
 		started = parsed;
@@ -121,9 +145,21 @@ export function parsePost(
 		}
 	}
 
+	// approval is only meaningful with needs_input. Other statuses store false.
+	// Omit it, or send null, and it is false. A non-boolean is rejected.
+	let approval = false;
+	if ("approval" in body && body.approval !== null && body.approval !== undefined) {
+		if (typeof body.approval !== "boolean") {
+			return { ok: false, error: "approval must be true or false" };
+		}
+		if (body.status === "needs_input") {
+			approval = body.approval;
+		}
+	}
+
 	return {
 		ok: true,
-		post: { bot, status: body.status, task, started_at: started, url, color },
+		post: { bot, status: body.status, task, started_at: started, url, color, approval, heartbeat },
 	};
 }
 
@@ -141,10 +177,22 @@ export function cleanTask(value: string): string | null {
 	return task;
 }
 
-export function parseStartedAt(value: unknown): string | null {
-	if (typeof value !== "string" || value.trim() === "") return null;
-	const ms = Date.parse(value);
+const STARTED_AT_ZONE = /(?:Z|[+-]\d{2}:\d{2}|[+-]\d{4})$/i;
+/** A client clock may run this far ahead of the worker. Further ahead is rejected. */
+const STARTED_AT_FUTURE_MS = 2 * 60 * 1000;
+
+/**
+ * ISO-8601 with an explicit time zone (Z or a numeric offset).
+ * A value with no zone is rejected, because Date.parse would guess.
+ * More than two minutes in the future is rejected.
+ */
+export function parseStartedAt(value: unknown, now = Date.now()): string | null {
+	if (typeof value !== "string") return null;
+	const text = value.trim();
+	if (!text || !STARTED_AT_ZONE.test(text)) return null;
+	const ms = Date.parse(text);
 	if (Number.isNaN(ms)) return null;
+	if (ms > now + STARTED_AT_FUTURE_MS) return null;
 	return new Date(ms).toISOString();
 }
 

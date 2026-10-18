@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -177,6 +178,7 @@ enum LoginItem {
     }
 
     static func setEnabled(_ on: Bool) throws {
+        LegacyLaunchAgent.removeIfPresent()
         let status = SMAppService.mainApp.status
         if on {
             if status != .enabled {
@@ -188,7 +190,71 @@ enum LoginItem {
     }
 }
 
-/// Feed address and post password carried by chiefstatus://setup and the bot prompt.
+/// install.sh used to write this LaunchAgent, which started the app even when the Settings switch was off.
+/// The switch is the only login control now. This removes the old agent. It does not create a new one.
+enum LegacyLaunchAgent {
+    static let label = "com.chiefstatus.menubar"
+
+    static func removeIfPresent() {
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+        if !FileManager.default.fileExists(atPath: plist.path) {
+            return
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        // disable, not bootout: bootout would quit the app if this agent is what launched it.
+        process.arguments = ["disable", "gui/\(Darwin.getuid())/\(label)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        try? FileManager.default.removeItem(at: plist)
+    }
+}
+
+/// Version shown in Settings. The running app reads CFBundleShortVersionString.
+/// A bare `ChiefStatus --render-preview` binary has no bundle, so that path uses 1.5.0.
+enum AppVersion {
+    static var current: String {
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return "1.5.0"
+    }
+
+    /// `v1.5.0` and `1.5.0` are the same version.
+    static func comparable(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("v") || text.hasPrefix("V") {
+            text.removeFirst()
+        }
+        return text
+    }
+
+    static func releasesPage() -> URL? {
+        return URL(string: "https://github.com/pohstep/chief-status/releases/latest")
+    }
+
+    /// The release page from GitHub, or the public latest-release page.
+    static func releasePage(_ raw: String?) -> URL? {
+        if let raw = raw {
+            if let url = URL(string: raw) {
+                if let scheme = url.scheme?.lowercased() {
+                    if scheme == "https" || scheme == "http" {
+                        return url
+                    }
+                }
+            }
+        }
+        return releasesPage()
+    }
+}
+
+/// Feed address, post password, and optional read token carried by chiefstatus://setup and the bot prompt.
 /// These strings are shown in Settings and copied to the clipboard. Do not log them.
 enum SetupShare {
     static let guide = "https://github.com/pohstep/chief-status#set-up-the-feed"
@@ -197,6 +263,8 @@ enum SetupShare {
     struct Link {
         var feed: String
         var password: String
+        /// Empty when the link has no read token. Opening the link then leaves a saved token alone.
+        var readToken: String
     }
 
     static func parse(_ url: URL) -> Link? {
@@ -206,6 +274,7 @@ enum SetupShare {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         var feed = ""
         var password = ""
+        var readToken = ""
         let items = components.queryItems ?? []
         for item in items {
             let value = item.value ?? ""
@@ -213,20 +282,27 @@ enum SetupShare {
                 feed = value
             } else if item.name == "password" {
                 password = value
+            } else if item.name == "token" {
+                readToken = value
             }
         }
-        return Link(feed: feed, password: password)
+        return Link(feed: feed, password: password, readToken: readToken)
     }
 
-    static func link(feed: String, password: String) -> String? {
+    static func link(feed: String, password: String, readToken: String = "") -> String? {
         guard let normalized = ConfigStore.normalize(feed), !password.isEmpty else { return nil }
-        var components = URLComponents()
-        components.scheme = "chiefstatus"
-        components.host = "setup"
-        components.queryItems = [
+        var items = [
             URLQueryItem(name: "feed", value: normalized),
             URLQueryItem(name: "password", value: password),
         ]
+        let token = readToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            items.append(URLQueryItem(name: "token", value: token))
+        }
+        var components = URLComponents()
+        components.scheme = "chiefstatus"
+        components.host = "setup"
+        components.queryItems = items
         return components.string
     }
 
@@ -240,6 +316,7 @@ enum SetupShare {
         let done = curl(address, secret, "done", "what finished", "")
         let failed = curl(address, secret, "failed", "what broke", "")
         let needs = curl(address, secret, "needs_input", "the question you need answered", "")
+        let approval = curl(address, secret, "needs_input", "exactly what to approve", ",\"approval\":true")
         let idle = curl(address, secret, "idle", "", "")
         return """
 Your name is Agent1.
@@ -258,8 +335,11 @@ Job finished:
 Job failed:
 \(failed)
 
-Waiting on me:
+Waiting on me. The task line must say exactly what you need:
 \(needs)
+
+Waiting on my approval. The task line must say exactly what to approve:
+\(approval)
 
 Then always:
 \(idle)
@@ -452,6 +532,62 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
     /// The popover and its frosted materials follow the app's appearance.
     func apply() {
         NSApp.appearance = nsAppearance
+    }
+}
+
+/// Needs-you sound. UserDefaults domain com.chiefstatus.menubar.
+/// A missing sound key means off. A missing reminder means off.
+enum NeedsYouSettings {
+    static let soundKey = "needsYouSound"
+    static let reminderKey = "needsYouReminderMinutes"
+    static let reminderChoices = [0, 2, 5, 10, 15]
+    /// Spoken reminders in one waiting episode, then silence until a new bot starts waiting.
+    static let reminderCap = 3
+
+    static func storedBool(_ key: String, fallback: Bool) -> Bool {
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return fallback
+        }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    static func storedReminder() -> Int {
+        if UserDefaults.standard.object(forKey: reminderKey) == nil {
+            return 0
+        }
+        let value = UserDefaults.standard.integer(forKey: reminderKey)
+        if reminderChoices.contains(value) {
+            return value
+        }
+        return 0
+    }
+
+    static func title(for minutes: Int) -> String {
+        if minutes <= 0 { return "Off" }
+        return "\(minutes) min"
+    }
+}
+
+/// How long since the last post before the panel says "no update" instead of working or idle.
+/// UserDefaults domain com.chiefstatus.menubar. A missing key means 10 minutes.
+enum QuietAfter {
+    static let key = "quietAfterMinutes"
+    static let choices = [5, 10, 15, 30, 60]
+    static let fallback = 10
+
+    static func stored() -> Int {
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return fallback
+        }
+        let value = UserDefaults.standard.integer(forKey: key)
+        if choices.contains(value) {
+            return value
+        }
+        return fallback
+    }
+
+    static func title(for minutes: Int) -> String {
+        return "\(minutes) min"
     }
 }
 

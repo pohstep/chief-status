@@ -34,7 +34,14 @@ enum Metrics {
     /// Working cards, the team card, and Finished today. Matches the 518 pt example.
     static func listHeight(for model: StatusModel) -> CGFloat {
         let needs = model.bots.filter { $0.status == "needs_input" }
-        let working = model.bots.filter { $0.status == "working" }
+        let workingAll = model.bots.filter { $0.status == "working" }
+        let quiet = workingAll.filter { bot in
+            bot.isQuiet(now: model.now, afterMinutes: model.quietAfterMinutes)
+                && !bot.isFaded(now: model.now, staleAfterMinutes: model.staleAfterMinutes)
+        }
+        let working = workingAll.filter { bot in
+            !quiet.contains(where: { $0.id == bot.id })
+        }
         let team = model.bots.filter { $0.status != "working" && $0.status != "needs_input" }
         var height: CGFloat = 0
         if !needs.isEmpty {
@@ -50,6 +57,10 @@ enum Metrics {
             if working.count > 1 {
                 height += CGFloat(working.count - 1) * 6
             }
+        }
+        if !quiet.isEmpty {
+            height += 8
+            height += CGFloat(quiet.count) * 32
         }
         if !team.isEmpty {
             height += 8
@@ -111,14 +122,26 @@ struct StatusPopoverView: View {
         let needs = model.bots.filter { $0.status == "needs_input" }.count
         let allWorking = model.bots.filter { $0.status == "working" }
         let stale = allWorking.filter { $0.isFaded(now: model.now, staleAfterMinutes: model.staleAfterMinutes) }.count
-        let working = allWorking.count - stale
+        let quietWorking = allWorking.filter { bot in
+            bot.isQuiet(now: model.now, afterMinutes: model.quietAfterMinutes)
+                && !bot.isFaded(now: model.now, staleAfterMinutes: model.staleAfterMinutes)
+        }.count
+        let working = allWorking.count - stale - quietWorking
+        let quietIdle = model.bots.filter { bot in
+            bot.status == "idle" && bot.isQuiet(now: model.now, afterMinutes: model.quietAfterMinutes)
+        }.count
         let failed = model.bots.filter { $0.status == "failed" }.count
         let doneToday = model.today.filter { $0.result == "done" }.count
         return Group {
             if needs == 0 && working == 0 && stale == 0 && failed == 0 && doneToday == 0 {
-                Text("All idle")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(PanelTheme.ink2)
+                if quietWorking == 0 && quietIdle == 0 {
+                    Text("All idle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(PanelTheme.ink2)
+                } else {
+                    Text("")
+                        .accessibilityHidden(true)
+                }
             } else {
                 HStack(spacing: 6) {
                     if needs > 0 {
@@ -210,11 +233,19 @@ struct StatusPopoverView: View {
     }
 
     /// Fresh cards first, longest-running first. Maybe-stale cards drop below them.
+    /// A quiet working bot that has not yet faded leaves this list for a plain row.
     private var workingBots: [Bot] {
         let now = model.now
         let staleAfter = model.staleAfterMinutes
+        let quietAfter = model.quietAfterMinutes
         return model.bots
-            .filter { $0.status == "working" }
+            .filter { bot in
+                if bot.status != "working" { return false }
+                if bot.isQuiet(now: now, afterMinutes: quietAfter) && !bot.isFaded(now: now, staleAfterMinutes: staleAfter) {
+                    return false
+                }
+                return true
+            }
             .sorted { lhs, rhs in
                 let leftFaded = lhs.isFaded(now: now, staleAfterMinutes: staleAfter)
                 let rightFaded = rhs.isFaded(now: now, staleAfterMinutes: staleAfter)
@@ -233,6 +264,25 @@ struct StatusPopoverView: View {
             .sorted { lhs, rhs in
                 let left = ISODate.date(from: lhs.startedAt) ?? .distantFuture
                 let right = ISODate.date(from: rhs.startedAt) ?? .distantFuture
+                if left != right { return left < right }
+                return lhs.bot.localizedCaseInsensitiveCompare(rhs.bot) == .orderedAscending
+            }
+    }
+
+    /// Working, last post older than the quiet setting, and not yet a black 404 card. Longest quiet first.
+    private var quietWorkingBots: [Bot] {
+        let now = model.now
+        let staleAfter = model.staleAfterMinutes
+        let quietAfter = model.quietAfterMinutes
+        return model.bots
+            .filter { bot in
+                bot.status == "working"
+                    && bot.isQuiet(now: now, afterMinutes: quietAfter)
+                    && !bot.isFaded(now: now, staleAfterMinutes: staleAfter)
+            }
+            .sorted { lhs, rhs in
+                let left = lhs.freshnessDate() ?? .distantFuture
+                let right = rhs.freshnessDate() ?? .distantFuture
                 if left != right { return left < right }
                 return lhs.bot.localizedCaseInsensitiveCompare(rhs.bot) == .orderedAscending
             }
@@ -299,9 +349,13 @@ struct StatusPopoverView: View {
                     }
                 }
             }
+            if !quietWorkingBots.isEmpty {
+                Color.clear.frame(height: 8)
+                QuietCard(bots: quietWorkingBots, now: model.now)
+            }
             if !teamBots.isEmpty {
                 Color.clear.frame(height: 8)
-                TeamCard(bots: teamBots, today: model.today, now: model.now)
+                TeamCard(bots: teamBots, today: model.today, now: model.now, quietAfterMinutes: model.quietAfterMinutes)
             }
             FinishedCard(
                 jobs: model.today,
@@ -367,7 +421,7 @@ struct StatusPopoverView: View {
                 TextEditor(text: .constant(prompt))
                     .font(.system(size: 10, design: .monospaced))
                     .frame(height: 120)
-                if let link = SetupShare.link(feed: shareFeed, password: model.postPassword) {
+                if let link = SetupShare.link(feed: shareFeed, password: model.postPassword, readToken: model.readToken) {
                     Text("Setup link")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(PanelTheme.ink)
@@ -375,7 +429,13 @@ struct StatusPopoverView: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(PanelTheme.ink2)
                         .textSelection(.enabled)
-                        .lineLimit(3)
+                        .lineLimit(4)
+                    if !model.readToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("This link includes the read token. Opening it on this Mac saves the token.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(PanelTheme.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(spacing: 8) {
                         Button("Copy prompt") { model.copyText(prompt) }
                             .buttonStyle(.bordered)
@@ -394,9 +454,9 @@ struct StatusPopoverView: View {
             Text(model.setupError ?? model.copyNote ?? model.testNote ?? " ")
                 .font(.system(size: 11))
                 .foregroundStyle(model.setupError == nil ? PanelTheme.ink2 : PanelTheme.redText)
-                .lineLimit(2)
+                .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 28, alignment: .top)
+                .frame(height: 40, alignment: .top)
             HStack(spacing: 8) {
                 Button("Save") { model.saveAddress() }
                     .buttonStyle(.borderedProminent)
@@ -451,6 +511,9 @@ struct StatusPopoverView: View {
                     .foregroundStyle(PanelTheme.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                 iconColour
+                NeedsYouSettingsSection(model: model)
+                QuietAfterRow(model: model)
+                AboutSection(model: model)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -745,7 +808,7 @@ private struct WorkingCard: View {
             Circle()
                 .strokeBorder(PanelTheme.lostInk2, lineWidth: 1.3)
                 .frame(width: 7, height: 7)
-            Text(isStale ? "stale? · \(elapsedText)" : "maybe stale · \(elapsedText)")
+            Text(isStale ? "stale? · \(quietElapsed)" : "maybe stale · \(quietElapsed)")
                 .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(PanelTheme.lostInk)
                 .lineLimit(1)
@@ -828,7 +891,7 @@ private struct WorkingCard: View {
     }
 
     private var freshPillText: String {
-        if isQuieted, let start = ISODate.date(from: bot.startedAt) {
+        if isQuieted, let start = bot.freshnessDate() {
             return "last update \(ago(since: start, now: now))"
         }
         return isStale ? "stale?" : elapsedText
@@ -846,17 +909,23 @@ private struct WorkingCard: View {
         return trimmed.isEmpty ? "Working" : trimmed
     }
 
+    /// How long the job has been running. The 404 clock is quietElapsed, from the last post.
     private var elapsedText: String {
         guard let start = ISODate.date(from: bot.startedAt) else { return "" }
         return elapsed(since: start, now: now)
     }
 
+    private var quietElapsed: String {
+        guard let start = bot.freshnessDate() else { return "" }
+        return elapsed(since: start, now: now)
+    }
+
     private var accessibilityText: String {
         var label = "\(bot.bot), working, \(taskLine)"
-        if isFaded, let start = ISODate.date(from: bot.startedAt) {
+        if isFaded, let start = bot.freshnessDate() {
             label += ", last update \(spokenAgo(since: start, now: now))"
             label += isStale ? ", stale" : ", maybe stale"
-        } else if isQuieted, let start = ISODate.date(from: bot.startedAt) {
+        } else if isQuieted, let start = bot.freshnessDate() {
             label += ", last update \(spokenAgo(since: start, now: now)), warning cleared"
         } else if !elapsedText.isEmpty {
             label += ", for \(elapsedText)"
@@ -966,8 +1035,9 @@ private struct NeedsCard: View {
     private var since: Date? { ISODate.date(from: bot.startedAt) }
 
     private var label: String {
-        guard let since = since else { return "needs you" }
-        return "needs you · \(ago(since: since, now: now))"
+        let word = bot.approval ? "approve" : "needs you"
+        guard let since = since else { return word }
+        return "\(word) · \(ago(since: since, now: now))"
     }
 
     private var taskLine: String {
@@ -978,10 +1048,117 @@ private struct NeedsCard: View {
     }
 
     private var accessibilityText: String {
-        var text = "\(bot.bot), needs you, \(taskLine)"
+        let waiting = bot.approval ? "needs your approval" : "needs you"
+        var text = "\(bot.bot), \(waiting), \(taskLine)"
         if let since = since { text += ", since \(spokenAgo(since: since, now: now))" }
         if bot.openURL != nil { text += ", opens chat" }
         return text
+    }
+
+    private func open() {
+        if let url = bot.openURL {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// A working bot whose last post is past the quiet setting, and not yet a 404 card.
+/// Face and label only. No pulse, no sound.
+private struct QuietCard: View {
+    let bots: [Bot]
+    let now: Date
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(bots.enumerated()), id: \.element.id) { index, bot in
+                QuietRow(bot: bot, now: now)
+                    .frame(height: 32)
+                    .overlay(alignment: .bottom) {
+                        if index < bots.count - 1 {
+                            Rectangle()
+                                .fill(PanelTheme.separator)
+                                .frame(height: 1)
+                                .padding(.leading, 9)
+                        }
+                    }
+            }
+        }
+        .background(quietBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(PanelTheme.cardRim, lineWidth: 1)
+        )
+        .shadow(color: PanelTheme.cardShadow, radius: 10, y: 4)
+    }
+
+    private var quietBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(PanelTheme.cardWash)
+        }
+    }
+}
+
+private struct QuietRow: View {
+    let bot: Bot
+    let now: Date
+    @State private var hovered = false
+
+    var body: some View {
+        Group {
+            if bot.openURL != nil {
+                Button(action: open) { row }
+                    .buttonStyle(.plain)
+            } else {
+                row
+            }
+        }
+        .onHover { hovered = $0 }
+        .help(bot.openURL == nil ? "" : "Open this agent's chat")
+    }
+
+    private var row: some View {
+        HStack(spacing: 8) {
+            MiniFace(status: "working", size: 20, fill: BotAccent.nsColor(name: bot.bot, stored: bot.color))
+            Text(bot.bot)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(PanelTheme.ink)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .leading)
+            Text(taskLine)
+                .font(.system(size: 12))
+                .foregroundStyle(PanelTheme.ink2)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(bot.noUpdateLabel(now: now))
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(PanelTheme.ink2)
+                .lineLimit(1)
+                .fixedSize()
+                .layoutPriority(1)
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(hovered ? PanelTheme.hoverFill : Color.clear)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var taskLine: String {
+        bot.task
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var accessibilityText: String {
+        var label = "\(bot.bot), \(bot.noUpdateLabel(now: now))"
+        if !taskLine.isEmpty { label += ", \(taskLine)" }
+        if bot.openURL != nil { label += ", opens chat" }
+        return label
     }
 
     private func open() {
@@ -995,11 +1172,12 @@ private struct TeamCard: View {
     let bots: [Bot]
     let today: [FinishedJob]
     let now: Date
+    let quietAfterMinutes: Int
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(bots.enumerated()), id: \.element.id) { index, bot in
-                TeamRow(bot: bot, lastPost: bot.lastPostDate(today: today), now: now, failedTint: bot.status == "failed")
+                TeamRow(bot: bot, lastPost: bot.lastPostDate(today: today), now: now, failedTint: bot.status == "failed", quietAfterMinutes: quietAfterMinutes)
                     .frame(height: 32)
                     .overlay(alignment: .bottom) {
                         if index < bots.count - 1 {
@@ -1034,6 +1212,7 @@ private struct TeamRow: View {
     let lastPost: Date?
     let now: Date
     let failedTint: Bool
+    let quietAfterMinutes: Int
     @State private var hovered = false
 
     var body: some View {
@@ -1101,7 +1280,11 @@ private struct TeamRow: View {
     }
 
     /// "Done · 12m ago". Done and failed count from the job's end, everything else from started_at.
+    /// A quiet idle bot says "no update in N min" and nothing else.
     private var statusText: String {
+        if bot.status == "idle" && bot.isQuiet(now: now, afterMinutes: quietAfterMinutes) {
+            return bot.noUpdateLabel(now: now)
+        }
         let word: String
         switch bot.status {
         case "failed": word = "Failed"
@@ -1121,6 +1304,11 @@ private struct TeamRow: View {
     }
 
     private var accessibilityText: String {
+        if bot.status == "idle" && bot.isQuiet(now: now, afterMinutes: quietAfterMinutes) {
+            var quiet = "\(bot.bot), \(bot.noUpdateLabel(now: now))"
+            if bot.openURL != nil { quiet += ", opens chat" }
+            return quiet
+        }
         var label = "\(bot.bot), \(bot.status)"
         if bot.status != "idle" { label += ", \(taskLine)" }
         if let lastPost = lastPost { label += ", last update \(spokenAgo(since: lastPost, now: now))" }
@@ -1756,8 +1944,129 @@ private func durationLabel(ms: Int) -> String {
     return "\(hours)h \(extra)m"
 }
 
+private struct AboutSection: View {
+    @ObservedObject var model: StatusModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("About")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(PanelTheme.ink)
+            Text("Chief Status \(AppVersion.current)")
+                .font(.system(size: 12))
+                .foregroundStyle(PanelTheme.ink)
+            Button(model.checkingUpdate ? "Checking…" : "Check for updates") {
+                model.checkForUpdates()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(model.checkingUpdate)
+            updateResult
+        }
+        .padding(.top, 4)
+    }
+
+    private var updateResult: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !model.updateNote.isEmpty {
+                Text(model.updateNote)
+                    .font(.system(size: 11))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.updateAvailable {
+                if let page = model.updatePage {
+                    Button("Download") { NSWorkspace.shared.open(page) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+                Text("brew upgrade --cask chief-status")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(PanelTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct QuietAfterRow: View {
+    @ObservedObject var model: StatusModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("No update after")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PanelTheme.ink)
+                Picker("No update after", selection: Binding(
+                    get: { model.quietAfterMinutes },
+                    set: { model.setQuietAfter($0) }
+                )) {
+                    ForEach(QuietAfter.choices, id: \.self) { minutes in
+                        Text(QuietAfter.title(for: minutes)).tag(minutes)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 88)
+            }
+            .frame(height: 24)
+            Text("A working or idle bot with no post for this long shows \"no update in N min\". No sound and no banner. The 30-minute black card is unchanged.")
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
+    }
+}
+
+private struct NeedsYouSettingsSection: View {
+    @ObservedObject var model: StatusModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("When a bot needs you")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(PanelTheme.ink)
+            Toggle("Sound alert when a bot needs you", isOn: Binding(
+                get: { model.needsYouSound },
+                set: { model.setNeedsYouSound($0) }
+            ))
+            .font(.system(size: 12))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            reminderRow
+            Text("Off until you turn it on. Speaks once when a bot starts waiting. It does not check Focus. A reminder speaks at most 3 times, then stops until a new bot starts waiting.")
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
+    }
+
+    private var reminderRow: some View {
+        HStack(spacing: 8) {
+            Text("Remind every")
+                .font(.system(size: 12))
+                .foregroundStyle(PanelTheme.ink)
+            Picker("Remind every", selection: Binding(
+                get: { model.needsYouReminderMinutes },
+                set: { model.setNeedsYouReminder($0) }
+            )) {
+                ForEach(NeedsYouSettings.reminderChoices, id: \.self) { minutes in
+                    Text(NeedsYouSettings.title(for: minutes)).tag(minutes)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 88)
+        }
+        .frame(height: 24)
+    }
+}
+
 /// `ChiefStatus --render-preview <folder>`: sample panels in light and dark, the 404 face at 28 and 20 pt,
-/// every menu bar cube, and the icon colour presets in normal, stale and needs-you.
+/// every menu bar cube, the icon colour presets, and the About section.
 /// Nothing is read from or sent to the feed.
 enum PreviewRenderer {
     static func run(folder: String) -> Int32 {
@@ -1823,6 +2132,9 @@ enum PreviewRenderer {
 
             let colours = iconColourSheet(dark: dark)
             ok = write(colours, size: NSSize(width: 324, height: 380), dark: dark, to: directory.appendingPathComponent("icon-colours-\(name).png")) && ok
+
+            let about = aboutSheet(dark: dark)
+            ok = write(about, size: NSSize(width: 680, height: 540), dark: dark, to: directory.appendingPathComponent("about-\(name).png")) && ok
         }
         print(ok ? "Wrote previews to \(directory.path)" : "Some previews failed")
         return ok ? 0 : 1
@@ -1862,7 +2174,11 @@ enum PreviewRenderer {
                     .frame(width: 48, height: 22)
                     Image(nsImage: StatusIcon.image(tone: .black, pose: IconPose(), working: rows[index].working))
                         .frame(width: 48, height: 22)
-                    Image(nsImage: StatusIcon.image(tone: .indigo, pose: IconPose(), working: rows[index].working))
+                    Image(nsImage: StatusIcon.image(
+                        tone: .indigo,
+                        pose: IconPose(),
+                        working: rows[index].working
+                    ))
                         .frame(width: 72, height: 22)
                 }
             }
@@ -1870,6 +2186,44 @@ enum PreviewRenderer {
         .padding(12)
         .frame(width: 324, height: 380, alignment: .topLeading)
         .background(dark ? Color(red: 0.12, green: 0.12, blue: 0.14) : Color(red: 0.93, green: 0.93, blue: 0.95))
+    }
+
+    /// About, before a check, up to date, an available release, and the offline line. No network call.
+    private static func aboutSheet(dark: Bool) -> some View {
+        let ready = StatusModel()
+        let current = StatusModel()
+        current.updateNote = "You're up to date"
+        let newer = StatusModel()
+        newer.updateNote = "Version 1.6.0 is available"
+        newer.updateAvailable = true
+        newer.updatePage = URL(string: "https://github.com/pohstep/chief-status/releases/latest")
+        let offline = StatusModel()
+        offline.updateNote = "Couldn't check for updates. Try again when you're online."
+        let ink = dark ? Color.white : Color.black
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                aboutColumn(model: ready, caption: "Before you check", ink: ink)
+                aboutColumn(model: current, caption: "Up to date", ink: ink)
+            }
+            HStack(alignment: .top, spacing: 12) {
+                aboutColumn(model: newer, caption: "Update available", ink: ink)
+                aboutColumn(model: offline, caption: "Offline", ink: ink)
+            }
+        }
+        .padding(12)
+        .frame(width: 680, height: 540, alignment: .topLeading)
+        .background(dark ? Color(red: 0.16, green: 0.16, blue: 0.18) : Color(red: 0.93, green: 0.93, blue: 0.95))
+    }
+
+    private static func aboutColumn(model: StatusModel, caption: String, ink: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(caption)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ink)
+            AboutSection(model: model)
+        }
+        .padding(10)
+        .frame(width: 318, height: 248, alignment: .topLeading)
     }
 
     private static func sampleModel() -> StatusModel {

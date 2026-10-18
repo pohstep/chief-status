@@ -652,19 +652,124 @@ async function main() {
 		const asked = await postStatus({ bot: "AskBot", status: "needs_input", task: "which logo?" });
 		assert(asked.status === 200, `needs_input post ${asked.status} ${JSON.stringify(asked.body)}`);
 		assert(asked.body.bot.status === "needs_input", "needs_input should be stored");
+		assert(asked.body.bot.approval === false, "needs_input without approval stays false");
 		assert(asked.body.bot.started_at !== "2026-10-18T09:00:00.000Z", "needs_input should start a new clock");
 		assert(Date.now() - Date.parse(asked.body.bot.started_at) < 60000, "needs_input clock should be now");
 		const askedAgain = await postStatus({ bot: "AskBot", status: "needs_input", task: "still waiting" });
 		assert(askedAgain.body.bot.started_at === asked.body.bot.started_at, "a repeat needs_input keeps its clock");
+		assert(askedAgain.body.bot.approval === false, "omitting approval on a repeat clears it");
 		const afterNeeds = await request(`${base}/status`);
 		assert(afterNeeds.body.today.length === jobsBeforeNeeds, "needs_input must not record a job");
 		assert(
-			afterNeeds.body.bots.some((bot) => bot.bot === "AskBot" && bot.status === "needs_input"),
-			"GET should list needs_input",
+			afterNeeds.body.bots.some((bot) => bot.bot === "AskBot" && bot.status === "needs_input" && bot.approval === false),
+			"GET should list needs_input with approval false",
 		);
+
+		const approved = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "approve the homepage copy",
+			approval: true,
+		});
+		assert(approved.status === 200, `approval post ${approved.status} ${JSON.stringify(approved.body)}`);
+		assert(approved.body.bot.approval === true, "approval true should be stored with needs_input");
+		assert(approved.body.bot.status === "needs_input", "approval does not change the status");
+		const approvedGet = await request(`${base}/status`);
+		const approvedRow = approvedGet.body.bots.find((bot) => bot.bot === "AskBot");
+		assert(approvedRow && approvedRow.approval === true, "GET /status should return approval");
+		assert(approvedRow.task === "approve the homepage copy", "GET should return the approval task");
+		const approvedLive = await liveSnapshot(`${base.replace("http", "ws")}/status/live`);
+		const liveApproved = approvedLive[0].bots.find((bot) => bot.bot === "AskBot");
+		assert(liveApproved && liveApproved.approval === true, "the live feed should return approval");
+
+		const explicitNo = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "which font?",
+			approval: false,
+		});
+		assert(explicitNo.body.bot.approval === false, "approval false should be stored");
+		const omittedAgain = await postStatus({ bot: "AskBot", status: "needs_input", task: "which font?" });
+		assert(omittedAgain.body.bot.approval === false, "leaving approval out means false");
+		const nullApproval = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "which font?",
+			approval: null,
+		});
+		assert(nullApproval.status === 200, `null approval ${nullApproval.status}`);
+		assert(nullApproval.body.bot.approval === false, "null approval means false");
+
+		const badApproval = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "which font?",
+			approval: "yes",
+		});
+		assert(badApproval.status === 400, `non-boolean approval should be 400, was ${badApproval.status}`);
+		assert(String(badApproval.body.error).includes("approval"), "the error should mention approval");
+
+		const ignoredApproval = await postStatus({
+			bot: "AskBot",
+			status: "working",
+			task: "continuing",
+			approval: true,
+		});
+		assert(ignoredApproval.status === 200, `approval on working ${ignoredApproval.status}`);
+		assert(ignoredApproval.body.bot.approval === false, "approval is only stored for needs_input");
+		assert(ignoredApproval.body.bot.status === "working", "the working post should still apply");
+
+		const approvedAgain = await postStatus({
+			bot: "AskBot",
+			status: "needs_input",
+			task: "approve the footer",
+			approval: true,
+		});
+		assert(approvedAgain.body.bot.approval === true, "a later needs_input can set approval again");
+		const clearedApproval = await postStatus({ bot: "AskBot", status: "idle", task: "" });
+		assert(clearedApproval.body.bot.approval === false, "leaving needs_input clears approval");
+
 		const unknownStatus = await postStatus({ bot: "AskBot", status: "waiting", task: "" });
 		assert(unknownStatus.status === 400, `unknown status should be 400, was ${unknownStatus.status}`);
 		assert(String(unknownStatus.body.error).includes("needs_input"), "the error should list needs_input");
+
+		const scriptEnv = {
+			...process.env,
+			CHIEF_STATUS_URL: base,
+			CHIEF_STATUS_TOKEN: token,
+		};
+		const postedApproval = await exec(script, ["AskBot", "needs_input", "approve the homepage copy", "--approval"], {
+			env: scriptEnv,
+		});
+		assert(postedApproval.stdout.includes('"approval":true'), `script --approval output ${postedApproval.stdout}`);
+		const scriptedApproval = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "AskBot");
+		assert(scriptedApproval.status === "needs_input", "script --approval should post needs_input");
+		assert(scriptedApproval.approval === true, "script --approval should set approval");
+		assert(scriptedApproval.task === "approve the homepage copy", `script approval task was ${scriptedApproval.task}`);
+
+		const postedApprovalEnv = await exec(script, ["AskBot", "needs_input", "ship the footer?"], {
+			env: { ...scriptEnv, CHIEF_STATUS_APPROVAL: "1" },
+		});
+		assert(postedApprovalEnv.stdout.includes('"approval":true'), `script env approval output ${postedApprovalEnv.stdout}`);
+		const envApproval = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "AskBot");
+		assert(envApproval.approval === true && envApproval.task === "ship the footer?", "CHIEF_STATUS_APPROVAL=1 should set approval");
+
+		const postedPlainNeeds = await exec(script, ["AskBot", "needs_input", "which font?"], { env: scriptEnv });
+		assert(postedPlainNeeds.stdout.includes('"ok":true'), `plain needs_input script ${postedPlainNeeds.stdout}`);
+		const plainNeeds = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "AskBot");
+		assert(plainNeeds.approval === false, "needs_input without --approval should be approval false");
+		assert(plainNeeds.task === "which font?", `plain needs_input task was ${plainNeeds.task}`);
+
+		let approvalOnWorking = false;
+		try {
+			await exec(script, ["AskBot", "working", "nope", "--approval"], { env: scriptEnv });
+		} catch (error) {
+			approvalOnWorking = true;
+			const stderr = `${error.stderr || ""}\n${error.message || ""}`;
+			assert(stderr.includes("needs_input"), `script --approval on working said ${stderr}`);
+		}
+		assert(approvalOnWorking, "--approval with a status other than needs_input should fail");
+
 		await postStatus({ bot: "AskBot", status: "idle", task: "" });
 
 		// DELETE /status/<bot>: password required, removes the bot and its jobs, unknown is 404.
@@ -716,11 +821,233 @@ async function main() {
 			"jobs older than the cap should be dropped",
 		);
 
+		const oldStart = "2020-01-01T00:00:00Z";
+		const postedAt = Date.now();
+		const longJob = await postStatus({
+			bot: "QuietBot",
+			status: "working",
+			task: "long job",
+			started_at: oldStart,
+		});
+		assert(longJob.status === 200, `long job ${longJob.status} ${JSON.stringify(longJob.body)}`);
+		assert(longJob.body.bot.started_at === "2020-01-01T00:00:00.000Z", "an old job start is kept");
+		const lastPosted = Date.parse(longJob.body.bot.last_posted_at);
+		assert(
+			Math.abs(lastPosted - postedAt) < 15000,
+			`last_posted_at should be this post, was ${longJob.body.bot.last_posted_at}`,
+		);
+		const stillGoing = await postStatus({
+			bot: "QuietBot",
+			status: "working",
+			task: "still the long job",
+		});
+		assert(stillGoing.status === 200, `repeat working ${stillGoing.status}`);
+		assert(
+			stillGoing.body.bot.started_at === "2020-01-01T00:00:00.000Z",
+			"a repeat working post keeps the job start",
+		);
+		assert(
+			Date.parse(stillGoing.body.bot.last_posted_at) >= lastPosted,
+			"a repeat working post refreshes last_posted_at",
+		);
+		await postStatus({ bot: "QuietBot", status: "idle", task: "" });
+		const resumedAt = Date.now();
+		const resumed = await postStatus({ bot: "QuietBot", status: "working", task: "new job" });
+		assert(resumed.status === 200, `resume working ${resumed.status}`);
+		assert(
+			Math.abs(Date.parse(resumed.body.bot.started_at) - resumedAt) < 15000,
+			`working with no started_at, after a non-working row, starts now, was ${resumed.body.bot.started_at}`,
+		);
+		assert(
+			Math.abs(Date.parse(resumed.body.bot.last_posted_at) - resumedAt) < 15000,
+			`last_posted_at on that post was ${resumed.body.bot.last_posted_at}`,
+		);
+		const listedQuiet = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "QuietBot");
+		assert(listedQuiet.last_posted_at === resumed.body.bot.last_posted_at, "GET should return last_posted_at");
+
+		const noZone = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: "2026-01-01T10:00:00",
+		});
+		assert(noZone.status === 400, `started_at without a time zone should be 400, was ${noZone.status}`);
+		const zoned = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: "2026-01-01T10:00:00+08:00",
+		});
+		assert(zoned.status === 200, `offset started_at ${zoned.status} ${JSON.stringify(zoned.body)}`);
+		assert(
+			zoned.body.bot.started_at === "2026-01-01T02:00:00.000Z",
+			`offset should be normalized, was ${zoned.body.bot.started_at}`,
+		);
+		const soon = new Date(Date.now() + 60 * 1000).toISOString();
+		const almostNow = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: soon,
+		});
+		assert(almostNow.status === 200, `started_at one minute ahead should be accepted, was ${almostNow.status}`);
+		const ahead = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+		const tooFar = await postStatus({
+			bot: "QuietBot",
+			status: "idle",
+			task: "",
+			started_at: ahead,
+		});
+		assert(tooFar.status === 400, `started_at more than 2 minutes ahead should be 400, was ${tooFar.status}`);
+
+		const beatStart = await postStatus({
+			bot: "BeatBot",
+			status: "working",
+			task: "draft",
+			started_at: "2020-01-01T00:00:00Z",
+			color: "#3B82F6",
+		});
+		assert(beatStart.status === 200, `beat start ${beatStart.status} ${JSON.stringify(beatStart.body)}`);
+		const beatPosted = Date.parse(beatStart.body.bot.last_posted_at);
+		const beatKept = await postStatus({
+			bot: "BeatBot",
+			status: "working",
+			task: "still draft",
+			heartbeat: true,
+			started_at: "2030-01-01T00:00:00Z",
+		});
+		assert(beatKept.status === 200, `heartbeat ${beatKept.status} ${JSON.stringify(beatKept.body)}`);
+		assert(
+			beatKept.body.bot.started_at === "2020-01-01T00:00:00.000Z",
+			`heartbeat must keep started_at, was ${beatKept.body.bot.started_at}`,
+		);
+		assert(
+			Date.parse(beatKept.body.bot.last_posted_at) >= beatPosted,
+			"heartbeat must refresh last_posted_at",
+		);
+		assert(beatKept.body.bot.task === "still draft", "heartbeat updates the task");
+		assert(beatKept.body.bot.color === "#3b82f6", "heartbeat keeps the stored colour");
+		const heartNewAt = Date.now();
+		const heartNew = await postStatus({
+			bot: "HeartNew",
+			status: "working",
+			task: "first beat",
+			heartbeat: true,
+			started_at: "2020-01-01T00:00:00Z",
+		});
+		assert(heartNew.status === 200, `first heartbeat ${heartNew.status} ${JSON.stringify(heartNew.body)}`);
+		assert(
+			heartNew.body.bot.started_at !== "2020-01-01T00:00:00.000Z",
+			"a first heartbeat ignores the client started_at",
+		);
+		assert(
+			Math.abs(Date.parse(heartNew.body.bot.started_at) - heartNewAt) < 15000,
+			`a first heartbeat starts now, was ${heartNew.body.bot.started_at}`,
+		);
+		const beatIdle = await postStatus({ bot: "BeatBot", status: "idle", task: "", heartbeat: true });
+		assert(beatIdle.status === 400, `heartbeat on idle should be 400, was ${beatIdle.status}`);
+		assert(
+			String(beatIdle.body.error || "").toLowerCase().includes("heartbeat"),
+			`heartbeat error was ${JSON.stringify(beatIdle.body)}`,
+		);
+		const beatWord = await postStatus({ bot: "BeatBot", status: "working", task: "x", heartbeat: "yes" });
+		assert(beatWord.status === 400, `non-boolean heartbeat should be 400, was ${beatWord.status}`);
+		const beatStill = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot");
+		assert(beatStill.status === "working", "a rejected heartbeat must not change the row");
+		assert(beatStill.started_at === "2020-01-01T00:00:00.000Z", "a rejected heartbeat must not move started_at");
+
+		await runHeartbeatScript(base);
+
 		console.log("feed tests passed");
 	} finally {
 		await worker.stop();
 		if (previousDevVars === null) fs.rmSync(devVarsPath, { force: true });
 		else fs.writeFileSync(devVarsPath, previousDevVars);
+	}
+}
+
+function assertNoToken(result, label) {
+	const out = `${result.stdout || ""}\n${result.stderr || ""}`;
+	assert(!out.includes(token), `${label} printed the token`);
+}
+
+async function waitUntilDead(pid) {
+	for (let i = 0; i < 25; i += 1) {
+		try {
+			process.kill(pid, 0);
+		} catch (error) {
+			if (error.code === "ESRCH") return;
+			throw error;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 40));
+	}
+	throw new Error("heartbeat process still running");
+}
+
+async function runHeartbeatScript(base) {
+	const script = path.join(workerDir, "scripts", "heartbeat.sh");
+	const postScript = path.join(workerDir, "scripts", "post-status.sh");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chief-heartbeats-"));
+	const env = {
+		...process.env,
+		CHIEF_STATUS_URL: base,
+		CHIEF_STATUS_TOKEN: token,
+		CHIEF_STATUS_HEARTBEAT_DIR: dir,
+		CHIEF_STATUS_HEARTBEAT_SECONDS: "3600",
+	};
+	const pidFile = path.join(dir, "BeatBot.pid");
+	try {
+		const before = Date.parse(
+			(await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot").last_posted_at,
+		);
+		const launched = await exec(script, ["BeatBot", "draft"], { env, timeout: 15000 });
+		assertNoToken(launched, "heartbeat start");
+		let listed = null;
+		const deadline = Date.now() + 10000;
+		while (Date.now() < deadline) {
+			const snap = await request(`${base}/status`);
+			listed = snap.body.bots.find((bot) => bot.bot === "BeatBot");
+			if (listed && Date.parse(listed.last_posted_at) > before) break;
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		}
+		assert(listed && Date.parse(listed.last_posted_at) > before, "heartbeat.sh did not refresh last_posted_at");
+		assert(
+			listed.started_at === "2020-01-01T00:00:00.000Z",
+			`heartbeat.sh moved started_at to ${listed.started_at}`,
+		);
+		assert(listed.task === "draft", `heartbeat.sh task was ${listed.task}`);
+		assert(listed.color === "#3b82f6", "heartbeat.sh should keep the stored colour");
+		assert(fs.existsSync(pidFile), "heartbeat pid file missing");
+		const pid = Number(String(fs.readFileSync(pidFile, "utf8")).trim());
+		assert(Number.isInteger(pid) && pid > 0, "heartbeat pid file was not a pid");
+		process.kill(pid, 0);
+
+		const stopped = await exec(script, ["stop", "BeatBot"], { env, timeout: 10000 });
+		assertNoToken(stopped, "heartbeat stop");
+		assert(!fs.existsSync(pidFile), "heartbeat stop should remove the pid file");
+		await waitUntilDead(pid);
+		const missing = await exec(script, ["stop", "BeatBot"], { env, timeout: 10000 });
+		assertNoToken(missing, "heartbeat stop with no pid");
+
+		const again = await exec(script, ["BeatBot", "draft"], { env, timeout: 15000 });
+		assertNoToken(again, "heartbeat restart");
+		const pidDeadline = Date.now() + 5000;
+		while (!fs.existsSync(pidFile) && Date.now() < pidDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert(fs.existsSync(pidFile), "heartbeat pid file missing after restart");
+		const pid2 = Number(String(fs.readFileSync(pidFile, "utf8")).trim());
+		const idled = await exec(postScript, ["BeatBot", "idle", "paused"], { env, timeout: 15000 });
+		assertNoToken(idled, "post-status idle");
+		await waitUntilDead(pid2);
+		const afterIdle = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot");
+		assert(afterIdle.status === "idle", `post-status should leave BeatBot idle, was ${afterIdle.status}`);
+	} finally {
+		try {
+			await exec(script, ["stop", "BeatBot"], { env, timeout: 5000 });
+		} catch {
+			// already stopped
+		}
 	}
 }
 

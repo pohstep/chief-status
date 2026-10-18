@@ -143,43 +143,21 @@ xattr -cr "$DEST" 2>/dev/null || true
 codesign --force --sign - "$DEST/Contents/MacOS/ChiefStatus"
 codesign --force --sign - "$DEST"
 
-PLIST_DIR="${HOME}/Library/LaunchAgents"
-PLIST="${PLIST_DIR}/com.chiefstatus.menubar.plist"
-mkdir -p "$PLIST_DIR"
-BIN_ESCAPED="$(xml_escape "$DEST/Contents/MacOS/ChiefStatus")"
-cat >"$PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>com.chiefstatus.menubar</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>${BIN_ESCAPED}</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>LimitLoadToSessionType</key>
-	<string>Aqua</string>
-	<key>ThrottleInterval</key>
-	<integer>10</integer>
-</dict>
-</plist>
-EOF
-
+# Open at login is Settings → Open at login inside the app.
+# An older install.sh wrote ~/Library/LaunchAgents/com.chiefstatus.menubar.plist,
+# which kept starting the app after that switch was turned off. Remove it.
 UID_NUM="$(id -u)"
+OLD_PLIST="${HOME}/Library/LaunchAgents/com.chiefstatus.menubar.plist"
 launchctl bootout "gui/${UID_NUM}/com.chiefstatus.menubar" 2>/dev/null || true
+rm -f "$OLD_PLIST"
+
 old="$(pgrep -f "${DEST}/Contents/MacOS/ChiefStatus" || true)"
 if [ -n "$old" ]; then
 	kill $old 2>/dev/null || true
 	sleep 0.4
 fi
 
-if ! launchctl bootstrap "gui/${UID_NUM}" "$PLIST"; then
-	echo "Couldn't register the login item. Opening the app anyway."
-	open "$DEST" || true
-fi
+open "$DEST" || true
 
 sleep 1
 echo
@@ -207,4 +185,4 @@ else
 	echo "Or run ./install.sh again with the address on the end."
 fi
 echo
-echo "It will open again each time you log in."
+echo "To open it every time you log in, click the cube, open Settings, and turn on Open at login."

@@ -10,6 +10,10 @@ struct Bot: Decodable, Identifiable {
     let startedAt: String
     let url: String?
     let color: String?
+    /// True when this needs_input post is an approval. Older feeds omit it, which means false.
+    let approval: Bool
+    /// When the worker last accepted a post for this bot. Nil on an older feed, which still uses startedAt.
+    let lastPostedAt: String?
     /// From the local links.json. Used only when the feed has no url for this bot.
     var localURL: String?
     /// Set by Clear on this Mac: the maybe-stale warning is hidden until then, unless the bot posts again first.
@@ -31,19 +35,47 @@ struct Bot: Decodable, Identifiable {
         return parsed
     }
 
+    /// Clock for the 404 and stale? marks. last_posted_at wins when the feed sends it.
+    /// An older feed leaves it out, and the app uses started_at, as in 1.4.
+    func freshnessDate() -> Date? {
+        if let posted = lastPostedAt {
+            if let date = ISODate.date(from: posted) {
+                return date
+            }
+        }
+        return ISODate.date(from: startedAt)
+    }
+
+    /// Working or idle, and the last post is at least `afterMinutes` old. No alert goes with this.
+    func isQuiet(now: Date, afterMinutes: Int) -> Bool {
+        if status != "working" && status != "idle" { return false }
+        if afterMinutes <= 0 { return false }
+        guard let posted = freshnessDate() else { return false }
+        return now.timeIntervalSince(posted) >= Double(afterMinutes) * 60
+    }
+
+    /// "no update in 12 min". The number is how long it has been, not the setting.
+    func noUpdateLabel(now: Date) -> String {
+        guard let posted = freshnessDate() else { return "no update" }
+        let minutes = Int(now.timeIntervalSince(posted) / 60)
+        let shown = minutes < 1 ? 1 : minutes
+        return "no update in \(shown) min"
+    }
+
     func isStale(now: Date, afterMinutes: Int) -> Bool {
-        guard status == "working", let start = ISODate.date(from: startedAt) else { return false }
+        guard status == "working", let start = freshnessDate() else { return false }
         return now.timeIntervalSince(start) >= Double(afterMinutes) * 60
     }
 
-    /// A working bot with no new post for StaleRule.fadeAfterMinutes. Re-posting working resets started_at, so this clears at once.
+    /// A working bot with no new post for StaleRule.fadeAfterMinutes.
+    /// A feed that sends last_posted_at measures that from the last post, not the job start.
     func isFaded(now: Date, staleAfterMinutes: Int) -> Bool {
         if isQuieted(now: now) { return false }
         return isStale(now: now, afterMinutes: StaleRule.fadeMinutes(staleAfterMinutes: staleAfterMinutes))
     }
 
     /// When this bot last posted. Done and failed use the newest ended_at for it in today's list,
-    /// because started_at keeps the working start. Anything else, or no entry today, uses started_at.
+    /// because started_at keeps the working start. Anything else uses last_posted_at when the feed sends it.
     func lastPostDate(today: [FinishedJob]) -> Date? {
         if status == "done" || status == "failed" {
             var newest: Date?
@@ -57,7 +89,7 @@ struct Bot: Decodable, Identifiable {
                 return newest
             }
         }
-        return ISODate.date(from: startedAt)
+        return freshnessDate()
     }
 
     enum CodingKeys: String, CodingKey {
@@ -66,16 +98,22 @@ struct Bot: Decodable, Identifiable {
         case task
         case url
         case color
+        case approval
         case startedAt = "started_at"
+        case lastPostedAt = "last_posted_at"
     }
 
-    init(bot: String, status: String, task: String, startedAt: String, url: String? = nil, color: String? = nil) {
+    init(bot: String, status: String, task: String, startedAt: String, url: String? = nil, color: String? = nil, approval: Bool = false, lastPostedAt: String? = nil) {
         self.bot = bot
         self.status = status
         self.task = task
         self.startedAt = startedAt
         self.url = url
         self.color = color
+        self.approval = approval
+        self.lastPostedAt = lastPostedAt
+        self.localURL = nil
+        self.quietUntil = nil
     }
 
     init(from decoder: Decoder) throws {
@@ -88,6 +126,20 @@ struct Bot: Decodable, Identifiable {
         url = rawURL.isEmpty ? nil : rawURL
         let rawColor = try container.decodeIfPresent(String.self, forKey: .color) ?? ""
         color = rawColor.isEmpty ? nil : rawColor
+        var flag = false
+        if container.contains(.approval) {
+            if let value = try? container.decode(Bool.self, forKey: .approval) {
+                flag = value
+            } else if let number = try? container.decode(Int.self, forKey: .approval) {
+                flag = number != 0
+            }
+        }
+        approval = flag
+        let rawPosted = try container.decodeIfPresent(String.self, forKey: .lastPostedAt) ?? ""
+        let trimmedPosted = rawPosted.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastPostedAt = trimmedPosted.isEmpty ? nil : trimmedPosted
+        localURL = nil
+        quietUntil = nil
     }
 }
 
@@ -127,6 +179,16 @@ struct FeedResponse: Decodable {
         bots = try container.decodeIfPresent([Bot].self, forKey: .bots) ?? []
         today = try container.decodeIfPresent([FinishedJob].self, forKey: .today) ?? []
         staleAfterMinutes = try container.decodeIfPresent(Int.self, forKey: .staleAfterMinutes) ?? 60
+    }
+}
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
     }
 }
 
@@ -198,13 +260,24 @@ final class StatusModel: ObservableObject {
     @Published var copyNote: String?
     @Published var testNote: String?
     @Published var sendingTest = false
+    /// Check for updates runs only when Settings asks. Nothing here is saved.
+    @Published var checkingUpdate = false
+    @Published var updateNote = ""
+    @Published var updateAvailable = false
+    @Published var updatePage: URL?
+    /// Spoken line when a bot starts waiting. Off until Settings turns it on. Stored in UserDefaults, not config.plist.
+    @Published var needsYouSound = false
+    /// Sound-only repeat. Off until the user picks 2, 5, 10 or 15 minutes.
+    @Published var needsYouReminderMinutes = 0
+    /// Quiet label once the last post is this old. Default 10. Not an alert.
+    @Published var quietAfterMinutes = QuietAfter.fallback
 
     /// What the feed sent. `bots` is this plus local links and local Clear.
     private var feedBots: [Bot] = []
     private var links: [String: String] = [:]
-    /// Bot name → its started_at when Clear was clicked, and when. Memory only.
-    /// A new started_at drops the entry; so does another fade window (30 min) after the click.
-    private var cleared: [String: (startedAt: String, at: Date)] = [:]
+    /// Bot name → the clocks when Clear was clicked, and when. Memory only.
+    /// A new post (started_at or last_posted_at) drops the entry; so does another fade window after the click.
+    private var cleared: [String: (startedAt: String, postedAt: String, at: Date)] = [:]
 
     var onChange: (() -> Void)?
     /// Every second. The menu bar uses it so a bot can turn stale without a new post.
@@ -217,6 +290,13 @@ final class StatusModel: ObservableObject {
     private var consecutiveNetworkErrors = 0
     private var knownStatus: [String: String] = [:]
     private var hasBaseline = false
+    private var reminderTimer: Timer?
+    /// Spoken reminders already played in this waiting episode. A new bot that starts waiting resets it.
+    private var reminderFired = 0
+    /// When each bot last had its failure spoken. Memory only. 10 minutes per bot.
+    private var failureSpokenAt: [String: Date] = [:]
+    private let failureCooldown: TimeInterval = 10 * 60
+    private let userAgent = "ChiefStatus/1.5.0"
     private var liveTask: URLSessionWebSocketTask?
     private var liveConnected = false
     private var reconnect: Timer?
@@ -255,7 +335,12 @@ final class StatusModel: ObservableObject {
         appearance = AppearanceChoice.stored()
         iconColor = IconColorSetting.load()
         readToken = ReadTokenStore.read()
+        LegacyLaunchAgent.removeIfPresent()
         openAtLogin = LoginItem.isEnabled()
+        // Notification permission is not asked here. The failure banner asks only when that switch is turned on.
+        needsYouSound = NeedsYouSettings.storedBool(NeedsYouSettings.soundKey, fallback: false)
+        needsYouReminderMinutes = NeedsYouSettings.storedReminder()
+        quietAfterMinutes = QuietAfter.stored()
         links = ConfigStore.readLinks()
         refresh()
         connectLive()
@@ -307,6 +392,7 @@ final class StatusModel: ObservableObject {
             return
         }
         ConfigStore.write(feedURL: normalized)
+        noteFeedAddress(normalized)
         draftURL = normalized
         editingAddress = false
         setupError = nil
@@ -345,17 +431,22 @@ final class StatusModel: ObservableObject {
         notify()
     }
 
-    /// Fills the feed address and the in-memory post password from a setup link.
-    /// The URL is not logged.
+    /// Fills the feed address, the in-memory post password, and the saved read token from a setup link.
+    /// The URL is not logged. An empty token leaves a token already saved on this Mac alone.
     func applySetupURL(_ url: URL) {
         guard let parsed = SetupShare.parse(url) else { return }
         if !parsed.password.isEmpty {
             postPassword = parsed.password
         }
+        let token = parsed.readToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            readToken = token
+            commitReadToken(reconnect: false)
+        }
         editingAddress = true
         if let normalized = ConfigStore.normalize(parsed.feed) {
             ConfigStore.write(feedURL: normalized)
-            feedURL = normalized
+            noteFeedAddress(normalized)
             draftURL = normalized
             setupError = nil
             notify()
@@ -401,49 +492,188 @@ final class StatusModel: ObservableObject {
             notify()
             return
         }
-        let payload = ["bot": "Test", "status": "working", "task": "test post"]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
         ConfigStore.write(feedURL: normalized)
-        feedURL = normalized
+        noteFeedAddress(normalized)
         draftURL = normalized
         sendingTest = true
         setupError = nil
+        copyNote = nil
         testNote = "Sending…"
         notify()
 
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("ChiefStatus/1.4.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("Bearer \(postPassword)", forHTTPHeaderField: "Authorization")
-        request.httpBody = body
-        let task = session.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
+        let name = "ChiefStatusTest-\(Int(Date().timeIntervalSince1970))"
+        let working = ["bot": name, "status": "working", "task": "test post"]
+        postJSON(url: url, payload: working) { [weak self] status in
+            guard let self = self else { return }
+            if status == 200 {
+                self.setupError = nil
+                self.editingAddress = false
+                self.testNote = "Removing the test…"
+                self.notify()
+                self.refresh()
+                self.connectLive()
+                self.finishTestPost(at: url, name: name)
+            } else {
                 self.sendingTest = false
                 self.testNote = nil
-                if error != nil || response == nil {
-                    self.editingAddress = true
+                self.editingAddress = true
+                if status == 0 {
                     self.setupError = "Couldn't reach the feed."
-                    self.notify()
+                } else if status == 401 {
+                    self.setupError = "The post password was refused."
+                } else {
+                    self.setupError = "The feed didn't accept the test post."
+                }
+                self.notify()
+            }
+        }
+    }
+
+    /// The working test already landed. Post that bot as idle, then delete only that name.
+    private func finishTestPost(at url: URL, name: String) {
+        let idle = ["bot": name, "status": "idle", "task": ""]
+        postJSON(url: url, payload: idle) { [weak self] _ in
+            guard let self = self else { return }
+            self.removeTestBot(feed: url, name: name) { removed in
+                self.sendingTest = false
+                if removed {
+                    self.setupError = nil
+                    self.editingAddress = false
+                    self.testNote = "Test post sent, then removed."
+                } else {
+                    self.editingAddress = true
+                    self.testNote = nil
+                    self.setupError = "\(name) is still on the feed. Run ./worker/scripts/delete-bot.sh \(name)"
+                }
+                self.notify()
+                self.refresh()
+                self.connectLive()
+            }
+        }
+    }
+
+    func checkForUpdates() {
+        if checkingUpdate { return }
+        checkingUpdate = true
+        updateNote = "Checking…"
+        updateAvailable = false
+        updatePage = nil
+        notify()
+        guard let endpoint = URL(string: "https://api.github.com/repos/pohstep/chief-status/releases/latest") else {
+            checkingUpdate = false
+            updateNote = "Couldn't check for updates. Try again when you're online."
+            notify()
+            return
+        }
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.checkingUpdate = false
+                self.applyUpdateCheck(data: data, response: response, error: error)
+            }
+        }
+        task.resume()
+    }
+
+    private func applyUpdateCheck(data: Data?, response: URLResponse?, error: Error?) {
+        let offline = "Couldn't check for updates. Try again when you're online."
+        if error != nil || data == nil {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let data = data else {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        guard let release = try? JSONDecoder().decode(GitHubRelease.self, from: data) else {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        let remote = AppVersion.comparable(release.tagName)
+        let local = AppVersion.comparable(AppVersion.current)
+        if remote.isEmpty {
+            updateNote = offline
+            updateAvailable = false
+            updatePage = nil
+            notify()
+            return
+        }
+        if remote == local {
+            updateNote = "You're up to date"
+            updateAvailable = false
+            updatePage = nil
+        } else {
+            updateNote = "Version \(remote) is available"
+            updateAvailable = true
+            updatePage = AppVersion.releasePage(release.htmlURL)
+        }
+        notify()
+    }
+
+    private func postJSON(url: URL, payload: [String: String], done: @escaping (Int) -> Void) {
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
+            done(0)
+            return
+        }
+        send(authedRequest(url: url, method: "POST", body: body), done: done)
+    }
+
+    private func removeTestBot(feed: URL, name: String, done: @escaping (Bool) -> Void) {
+        guard var components = URLComponents(url: feed, resolvingAgainstBaseURL: false) else {
+            done(false)
+            return
+        }
+        var path = components.path
+        while path.hasSuffix("/") {
+            path.removeLast()
+        }
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        path += "/\(encoded)"
+        components.path = path
+        guard let target = components.url else {
+            done(false)
+            return
+        }
+        send(authedRequest(url: target, method: "DELETE", body: nil)) { status in
+            done(status == 200 || status == 404)
+        }
+    }
+
+    private func authedRequest(url: URL, method: String, body: Data?) -> URLRequest {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = method
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("Bearer \(postPassword)", forHTTPHeaderField: "Authorization")
+        if let body = body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        }
+        return request
+    }
+
+    /// Calls back on the main queue with the HTTP status, or 0 when the feed could not be reached.
+    private func send(_ request: URLRequest, done: @escaping (Int) -> Void) {
+        let task = session.dataTask(with: request) { _, response, error in
+            DispatchQueue.main.async {
+                if error != nil || response == nil {
+                    done(0)
                     return
                 }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                if status == 200 {
-                    self.setupError = nil
-                    self.editingAddress = false
-                    self.notify()
-                    self.refresh()
-                    self.connectLive()
-                } else if status == 401 {
-                    self.editingAddress = true
-                    self.setupError = "The post password was refused."
-                    self.notify()
-                } else {
-                    self.editingAddress = true
-                    self.setupError = "The feed didn't accept the test post."
-                    self.notify()
-                }
+                done(status)
             }
         }
         task.resume()
@@ -474,7 +704,57 @@ final class StatusModel: ObservableObject {
         notify()
     }
 
-    /// Saves the menu bar colour and redraws the cube on the next notify. No relaunch.
+    func setNeedsYouSound(_ on: Bool) {
+        needsYouSound = on
+        UserDefaults.standard.set(on, forKey: NeedsYouSettings.soundKey)
+        if !on {
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+        } else {
+            armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" }, restartTimer: false)
+        }
+        notify()
+    }
+
+    func setNeedsYouReminder(_ minutes: Int) {
+        let next = NeedsYouSettings.reminderChoices.contains(minutes) ? minutes : 0
+        needsYouReminderMinutes = next
+        UserDefaults.standard.set(next, forKey: NeedsYouSettings.reminderKey)
+        reminderTimer?.invalidate()
+        reminderTimer = nil
+        armNeedsYouReminder(waiting: bots.contains { $0.status == "needs_input" }, restartTimer: true)
+        notify()
+    }
+
+    func setQuietAfter(_ minutes: Int) {
+        let next = QuietAfter.choices.contains(minutes) ? minutes : QuietAfter.fallback
+        quietAfterMinutes = next
+        UserDefaults.standard.set(next, forKey: QuietAfter.key)
+        notify()
+    }
+
+    /// Opens the bot's chat. The feed link wins. links.json is the fallback. Returns false when there is no link.
+    func openChat(named name: String) -> Bool {
+        if let bot = bots.first(where: { $0.bot == name }) {
+            if let url = bot.openURL {
+                NSWorkspace.shared.open(url)
+                return true
+            }
+        }
+        let links = ConfigStore.readLinks()
+        if let raw = links[name] {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = URL(string: trimmed), let scheme = parsed.scheme, !scheme.isEmpty {
+                let blocked = ["javascript", "data", "file", "vbscript"]
+                if !blocked.contains(scheme.lowercased()) {
+                    NSWorkspace.shared.open(parsed)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     func setIconColor(_ next: IconColorSetting) {
         let normalized = IconColorSetting(stored: IconColorSetting.normalize(next.stored))
         if normalized == iconColor { return }
@@ -486,7 +766,7 @@ final class StatusModel: ObservableObject {
     /// "Clear" on a maybe-stale card. Local only, nothing is posted: the bot stays working and the
     /// 404 warning is hidden for another fade window, or until the bot posts again and later goes quiet.
     func clearLocally(_ bot: Bot) {
-        cleared[bot.bot] = (startedAt: bot.startedAt, at: Date())
+        cleared[bot.bot] = (startedAt: bot.startedAt, postedAt: bot.lastPostedAt ?? "", at: Date())
         rebuildBots()
         notify()
     }
@@ -501,7 +781,12 @@ final class StatusModel: ObservableObject {
         let window = Double(StaleRule.fadeMinutes(staleAfterMinutes: staleAfterMinutes)) * 60
         cleared = cleared.filter { name, entry in
             Date().timeIntervalSince(entry.at) < window
-                && feedBots.contains { $0.bot == name && $0.startedAt == entry.startedAt && $0.status == "working" }
+                && feedBots.contains { bot in
+                    bot.bot == name
+                        && bot.startedAt == entry.startedAt
+                        && (bot.lastPostedAt ?? "") == entry.postedAt
+                        && bot.status == "working"
+                }
         }
         bots = feedBots.map { source in
             var bot = source
@@ -522,7 +807,7 @@ final class StatusModel: ObservableObject {
     func refresh() {
         ConfigStore.ensureDirectory()
         let raw = ConfigStore.readFeedURL() ?? ""
-        feedURL = raw
+        noteFeedAddress(raw)
         links = ConfigStore.readLinks()
 
         guard !ConfigStore.needsSetup(raw) else {
@@ -541,14 +826,16 @@ final class StatusModel: ObservableObject {
         }
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.setValue("ChiefStatus/1.4.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         applyReadToken(&request)
         task?.cancel()
+        let requested = raw
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
-                self?.apply(data: data, response: response, error: error)
+                guard let self = self, self.feedURL == requested else { return }
+                self.apply(data: data, response: response, error: error)
             }
         }
         self.task = task
@@ -606,17 +893,131 @@ final class StatusModel: ObservableObject {
         errorText = nil
     }
 
+    /// A different feed must not speak for bots that were already waiting on the previous one.
+    private func noteFeedAddress(_ raw: String) {
+        if raw != feedURL {
+            knownStatus = [:]
+            hasBaseline = false
+            failureSpokenAt = [:]
+            reminderFired = 0
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+            cleared = [:]
+        }
+        feedURL = raw
+    }
+
     private func noteTransitions(_ bots: [Bot]) {
-        if hasBaseline, alertOnFailure {
-            let fresh = bots.filter { bot in
-                bot.status == "failed" && knownStatus[bot.bot] != "failed"
+        var entered: [Bot] = []
+        if hasBaseline {
+            if alertOnFailure {
+                let fresh = bots.filter { bot in
+                    bot.status == "failed" && knownStatus[bot.bot] != "failed"
+                }
+                if !fresh.isEmpty {
+                    announceFailures(fresh)
+                }
             }
-            if !fresh.isEmpty {
-                AlertCenter.announce(fresh)
+            for bot in bots where bot.status == "needs_input" {
+                if knownStatus[bot.bot] != "needs_input" {
+                    entered.append(bot)
+                }
+            }
+            if needsYouSound && !entered.isEmpty {
+                FailureSpeaker.shared.speak(entered.map { needsYouPhrase($0) })
             }
         }
         knownStatus = Dictionary(uniqueKeysWithValues: bots.map { ($0.bot, $0.status) })
         hasBaseline = true
+        let waiting = bots.contains { $0.status == "needs_input" }
+        if !waiting {
+            reminderFired = 0
+            armNeedsYouReminder(waiting: false, restartTimer: true)
+        } else if !entered.isEmpty {
+            reminderFired = 0
+            armNeedsYouReminder(waiting: true, restartTimer: true)
+        } else {
+            armNeedsYouReminder(waiting: true, restartTimer: false)
+        }
+    }
+
+    /// Banner for every new failure. The spoken line waits 10 minutes per bot.
+    private func announceFailures(_ bots: [Bot]) {
+        let now = Date()
+        var speakable: [Bot] = []
+        for bot in bots {
+            var allowed = true
+            if let last = failureSpokenAt[bot.bot] {
+                if now.timeIntervalSince(last) < failureCooldown {
+                    allowed = false
+                }
+            }
+            if allowed {
+                failureSpokenAt[bot.bot] = now
+                speakable.append(bot)
+            }
+        }
+        AlertCenter.announceFailures(bots, speak: speakable)
+    }
+
+    /// Sound only. Off, the sound toggle off, nobody waiting, or 3 reminders already spoken, stops the timer.
+    /// restartTimer drops a running timer so a new waiter does not get a reminder seconds after the first line.
+    private func armNeedsYouReminder(waiting: Bool, restartTimer: Bool) {
+        if !waiting || !needsYouSound || needsYouReminderMinutes <= 0 || reminderFired >= NeedsYouSettings.reminderCap {
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+            return
+        }
+        if !restartTimer {
+            if let timer = reminderTimer, timer.isValid {
+                let wanted = TimeInterval(needsYouReminderMinutes * 60)
+                if abs(timer.timeInterval - wanted) < 0.5 {
+                    return
+                }
+            }
+        }
+        reminderTimer?.invalidate()
+        let interval = TimeInterval(needsYouReminderMinutes * 60)
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            self?.fireNeedsYouReminder()
+        }
+        timer.tolerance = min(30, interval * 0.05)
+        RunLoop.main.add(timer, forMode: .common)
+        reminderTimer = timer
+    }
+
+    private func fireNeedsYouReminder() {
+        if !needsYouSound || reminderFired >= NeedsYouSettings.reminderCap {
+            armNeedsYouReminder(waiting: false, restartTimer: true)
+            return
+        }
+        let waiting = bots
+            .filter { $0.status == "needs_input" }
+            .sorted { $0.bot.localizedCaseInsensitiveCompare($1.bot) == .orderedAscending }
+        if waiting.isEmpty {
+            reminderFired = 0
+            armNeedsYouReminder(waiting: false, restartTimer: true)
+            return
+        }
+        let line: String
+        if waiting.count == 1 {
+            line = needsYouPhrase(waiting[0])
+        } else {
+            line = waiting.map { needsYouPhrase($0) }.joined(separator: ". ")
+        }
+        FailureSpeaker.shared.speak([line])
+        reminderFired += 1
+        if reminderFired >= NeedsYouSettings.reminderCap {
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+        }
+    }
+
+    private func needsYouPhrase(_ bot: Bot) -> String {
+        if bot.approval {
+            return "\(bot.bot) needs your approval"
+        }
+        return "\(bot.bot) needs you"
     }
 
     /// While the live socket is up, it carries updates. The 15s poll is only the fallback.
@@ -676,7 +1077,7 @@ final class StatusModel: ObservableObject {
         }
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
-        request.setValue("ChiefStatus/1.4.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         applyReadToken(&request)
         let socket = session.webSocketTask(with: request)
@@ -781,8 +1182,10 @@ private enum AlertCenter {
         }
     }
 
-    static func announce(_ bots: [Bot]) {
-        FailureSpeaker.shared.speak(bots.map(\.bot))
+    static func announceFailures(_ bots: [Bot], speak: [Bot]) {
+        if !speak.isEmpty {
+            FailureSpeaker.shared.speak(speak.map { "\($0.bot) task failed" })
+        }
         let content = UNMutableNotificationContent()
         content.title = "An agent failed"
         if bots.count == 1 {
@@ -792,13 +1195,17 @@ private enum AlertCenter {
             content.body = "\(bots.map(\.bot).joined(separator: ", ")) failed"
         }
         content.sound = nil
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        deliver(content, identifier: UUID().uuidString)
+    }
+
+    private static func deliver(_ content: UNMutableNotificationContent, identifier: String) {
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
 
-/// Speaks "<Bot> task failed" with the system voice (the same one `say` uses).
-/// Several failures at once are queued and spoken one after another.
+/// Speaks a line with the system voice (the same one `say` uses).
+/// Failures and needs-you alerts share this queue, so they never talk over each other.
 final class FailureSpeaker: NSObject, NSSpeechSynthesizerDelegate {
     static let shared = FailureSpeaker()
 
@@ -811,17 +1218,16 @@ final class FailureSpeaker: NSObject, NSSpeechSynthesizerDelegate {
         synth.delegate = self
     }
 
-    func speak(_ names: [String]) {
-        for name in names where !queue.contains(name) {
-            queue.append(name)
+    func speak(_ phrases: [String]) {
+        for phrase in phrases where !queue.contains(phrase) {
+            queue.append(phrase)
         }
         next()
     }
 
     private func next() {
         guard !speaking, !queue.isEmpty else { return }
-        let name = queue.removeFirst()
-        let phrase = "\(name) task failed"
+        let phrase = queue.removeFirst()
         speaking = synth.startSpeaking(phrase)
         NSLog("ChiefStatus spoken alert start: \"%@\" (started: %@)", phrase, speaking ? "yes" : "no")
         if !speaking { next() }

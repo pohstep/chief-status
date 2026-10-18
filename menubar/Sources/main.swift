@@ -69,15 +69,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.start()
         updateChrome()
 
-        // Lets a script open or close the panel for screenshots and tests, without UI scripting:
-        // a distributed notification named com.chiefstatus.togglePanel.
-        DistributedNotificationCenter.default().addObserver(
-            self,
-            selector: #selector(togglePanelFromNotification(_:)),
-            name: NSNotification.Name("com.chiefstatus.togglePanel"),
-            object: nil,
-            suspensionBehavior: .deliverImmediately
-        )
+        // Normal runs do not listen. A scripted test passes --test (or --render-preview) so it can
+        // open the panel with a distributed notification named com.chiefstatus.togglePanel.
+        if AppDelegate.allowsPanelToggleListener {
+            DistributedNotificationCenter.default().addObserver(
+                self,
+                selector: #selector(togglePanelFromNotification(_:)),
+                name: NSNotification.Name("com.chiefstatus.togglePanel"),
+                object: nil,
+                suspensionBehavior: .deliverImmediately
+            )
+        }
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
@@ -96,12 +98,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         revealPanel()
     }
 
-    /// chiefstatus://setup links. The URL is not logged: it carries the post password.
+    /// chiefstatus://setup links. The URL is not logged: it can carry the post password and the read token.
     @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
         guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue else { return }
         guard let url = URL(string: text) else { return }
         model.applySetupURL(url)
         revealPanel()
+    }
+
+    /// --test and --render-preview only. A normal launch does not observe this name.
+    private static var allowsPanelToggleListener: Bool {
+        let args = CommandLine.arguments
+        if args.contains("--test") { return true }
+        if args.contains("--render-preview") { return true }
+        return false
     }
 
     private func revealPanel() {
@@ -111,11 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         pendingReveal = false
         if popover.isShown { return }
-        togglePopover(nil)
+        togglePanel(activate: false)
     }
 
     @objc private func togglePanelFromNotification(_ notification: Notification) {
-        togglePopover(nil)
+        togglePanel(activate: false)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -125,15 +135,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// The status-item click. That is the only path that may activate the app.
     @objc private func togglePopover(_ sender: Any?) {
+        togglePanel(activate: true)
+    }
+
+    private func togglePanel(activate: Bool) {
         guard let button = statusItem.button else { return }
         if popover.isShown {
-            popover.performClose(sender)
+            popover.performClose(nil)
             return
         }
         model.setPanelOpen(true)
         updateChrome()
-        NSApp.activate(ignoringOtherApps: true)
+        if activate {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         button.highlight(true)
     }
@@ -151,7 +168,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func currentBarState() -> BarState {
-        BarState.from(bots: model.bots, now: Date(), staleAfterMinutes: model.staleAfterMinutes)
+        BarState.from(
+            bots: model.bots,
+            now: Date(),
+            staleAfterMinutes: model.staleAfterMinutes,
+            quietAfterMinutes: model.quietAfterMinutes
+        )
     }
 
     private func applyBar(_ state: BarState) {
