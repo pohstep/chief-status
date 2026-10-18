@@ -286,6 +286,135 @@ Never put passwords or secrets in the task line.
     }
 }
 
+/// Menu bar icon colour. UserDefaults domain com.chiefstatus.menubar, key "iconColor".
+/// "default" keeps today's orange working cube. A "#RRGGBB" value is a preset or a custom colour.
+/// Missing and unreadable values are default, so existing users keep the current icon.
+struct IconColorSetting: Equatable {
+    var stored: String
+
+    static let defaultsKey = "iconColor"
+    static let defaultToken = "default"
+
+    var isDefault: Bool { stored == IconColorSetting.defaultToken }
+
+    var title: String {
+        if isDefault { return "Default" }
+        let match = IconSwatch.all.first { $0.hex == stored }
+        if let match = match { return match.name }
+        return "Custom"
+    }
+
+    /// Colour shown in the picker. Default shows today's orange, without saving it.
+    var nsColor: NSColor {
+        if isDefault { return ChiefPalette.orange }
+        return IconColorSetting.color(hex: stored) ?? ChiefPalette.orange
+    }
+
+    /// Hex the picker already represents, so a no-op write does not leave Default.
+    var pickerHex: String {
+        return IconColorSetting.hex(from: nsColor)
+    }
+
+    static func load() -> IconColorSetting {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        return IconColorSetting(stored: normalize(raw))
+    }
+
+    func save() {
+        UserDefaults.standard.set(stored, forKey: IconColorSetting.defaultsKey)
+    }
+
+    static func normalize(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.lowercased() == defaultToken {
+            return defaultToken
+        }
+        if let hex = canonicalHex(trimmed) {
+            return hex
+        }
+        return defaultToken
+    }
+
+    static func canonicalHex(_ raw: String) -> String? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if text.hasPrefix("#") {
+            text.removeFirst()
+        }
+        if text.count != 6 { return nil }
+        let digits = CharacterSet(charactersIn: "0123456789ABCDEF")
+        if text.rangeOfCharacter(from: digits.inverted) != nil {
+            return nil
+        }
+        return "#" + text
+    }
+
+    static func color(hex: String) -> NSColor? {
+        guard let canonical = canonicalHex(hex) else { return nil }
+        let text = String(canonical.dropFirst())
+        guard let value = UInt32(text, radix: 16) else { return nil }
+        let red = CGFloat((value >> 16) & 0xFF) / 255
+        let green = CGFloat((value >> 8) & 0xFF) / 255
+        let blue = CGFloat(value & 0xFF) / 255
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
+    }
+
+    static func hex(from color: NSColor) -> String {
+        let converted = color.usingColorSpace(.sRGB)
+        let rgb = converted ?? color
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        if !rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            return "#F39C28"
+        }
+        return String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
+    }
+
+    /// True when two hex colours are the same, allowing for picker rounding.
+    static func nearly(_ lhs: String, _ rhs: String, tolerance: CGFloat = 0.04) -> Bool {
+        if lhs == rhs { return true }
+        guard let left = color(hex: lhs), let right = color(hex: rhs) else { return false }
+        let red = abs(left.redComponent - right.redComponent)
+        let green = abs(left.greenComponent - right.greenComponent)
+        let blue = abs(left.blueComponent - right.blueComponent)
+        return red < tolerance && green < tolerance && blue < tolerance
+    }
+
+    private static func byte(_ channel: CGFloat) -> Int {
+        let scaled = Int((channel * 255).rounded())
+        if scaled < 0 { return 0 }
+        if scaled > 255 { return 255 }
+        return scaled
+    }
+}
+
+/// The eleven icon presets, in Settings order. Default and Custom are separate.
+struct IconSwatch: Equatable, Identifiable {
+    var name: String
+    var hex: String
+
+    var id: String { hex }
+
+    var nsColor: NSColor {
+        return IconColorSetting.color(hex: hex) ?? ChiefPalette.orange
+    }
+
+    static let all: [IconSwatch] = [
+        IconSwatch(name: "White", hex: "#FFFFFF"),
+        IconSwatch(name: "Brown", hex: "#9A6D42"),
+        IconSwatch(name: "Red", hex: "#E94347"),
+        IconSwatch(name: "Deep orange", hex: "#E8663A"),
+        IconSwatch(name: "Orange", hex: "#E9983A"),
+        IconSwatch(name: "Green", hex: "#5ABF78"),
+        IconSwatch(name: "Teal", hex: "#3BB5B0"),
+        IconSwatch(name: "Blue", hex: "#3A86F4"),
+        IconSwatch(name: "Purple", hex: "#8762F3"),
+        IconSwatch(name: "Pink", hex: "#E85FA8"),
+        IconSwatch(name: "Grey", hex: "#8E8E93"),
+    ]
+}
+
 /// Settings → Appearance. Stored in UserDefaults (com.chiefstatus.menubar, key "appearance").
 enum AppearanceChoice: String, CaseIterable, Identifiable {
     case system

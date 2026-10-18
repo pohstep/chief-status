@@ -102,7 +102,7 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | Click the cube | Open or close the panel |
 | Click a bot's row | Open that bot's chat, if it sent a link |
 | Click **Finished today** | Fold or unfold today's finished jobs. It remembers your choice |
-| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set a **Read token**, or set **Appearance** to System, Light or Dark |
+| Click **Settings** | Change the feed address, copy the bot prompt, turn **Open at login** or **Alert when a bot fails** on or off, set a **Read token**, set **Icon colour**, or set **Appearance** to System, Light or Dark |
 | Click **No feed yet? Set one up** | Open these setup steps |
 | Click **Send a test post** | Post one working line for a bot named Test, so you can see the panel light up |
 | Click **Deploy to Cloudflare** | Open the one-click deploy page for the feed |
@@ -110,6 +110,8 @@ If you installed with `./install.sh`, run `./uninstall.sh` instead. It also remo
 | Click **Check on it** or **Clear** on a black **maybe stale** card | Open its chat, or hide the warning on this Mac for 30 minutes (nothing is posted). The rest of a black card does nothing when clicked |
 | **last update 36m ago** on an orange card | You cleared its warning. It is still working, as far as the feed knows |
 | Click **Quit**, or press `⌘Q` | Close the app |
+
+**Icon colour** (Settings) replaces the orange working cube only. Default keeps today's look. The other choices are eleven swatches or a custom colour. It changes at once and is remembered. Grey idle, red failed, the black **404**, and the indigo **?** stay their own colours. A colour that fades into the menu bar, including white on a light bar, keeps that colour and gains a thin contrasting outline.
 
 <p align="center">
   <img src="docs/panel.png" width="328" alt="The panel up close: a fresh orange working card, a black maybe-stale card with a 404 face, and each row showing when that bot last posted">
@@ -403,7 +405,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice and the optional **Read token** are kept in the app's private preferences (`com.chiefstatus.menubar`, keys `appearance` and `readToken`). The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
+The **Appearance** choice, the **Icon colour**, and the optional **Read token** are kept in the app's private preferences (`com.chiefstatus.menubar`, keys `appearance`, `iconColor` and `readToken`). `iconColor` is `default` or a `#RRGGBB` colour. The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
 
 What is stored in your feed, on your own Cloudflare account:
 

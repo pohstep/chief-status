@@ -78,6 +78,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             suspensionBehavior: .deliverImmediately
         )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(menuBarThemeChanged(_:)),
+            name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
 
         NSAppleEventManager.shared().setEventHandler(
             self,
@@ -117,6 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     @objc private func togglePanelFromNotification(_ notification: Notification) {
         togglePopover(nil)
+    }
+
+    /// Appearance is System, so a menu bar theme change redraws the contrast outline.
+    @objc private func menuBarThemeChanged(_ notification: Notification) {
+        updateChrome()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -11,6 +11,7 @@ In plain words:
 - **Open at login** in Settings, using the macOS 13 login-item switch.
 - **No storage box for new feeds.** The KV binding is gone. A short note covers moving from v1.1. Setup asks for your time zone and writes `TZ`.
 - **Optional read token.** When the `READ_TOKEN` secret is set, `GET /status` and the live feed need `Authorization: Bearer <token>` and answer `401` with an empty body without it. When it is unset, reading stays open. The app keeps the token in its private preferences (not the Keychain) and sends it on GET and on the WebSocket.
+- **Icon colour.** Settings → Icon colour: Default (today's orange working cube), eleven swatches, or a custom colour. It updates the menu bar at once and is kept in preferences (`iconColor`). Idle grey, failed red, the black 404, and the indigo needs-you cube stay their own colours. A low-contrast colour, including white on a light menu bar, keeps the colour you picked and gains a thin outline.
 - **Homebrew cask** at `packaging/homebrew/Casks/chief-status.rb`, with the unsigned-app caveat. The old `--HEAD` formula is gone. The SHA-256 is a placeholder until the release disk image exists.
 - README paths say `/Applications` for the disk image and `~/Applications` for `./install.sh`, and they say what `BOTS` is.
 
@@ -22,6 +23,7 @@ Details:
 - Worker: `configuredReadToken` treats a missing or blank `READ_TOKEN` as unset. A refusal is `new Response(null, { status: 401 })`. `GET /status` takes the Bearer header only. `/status/live` also accepts `?token=<token>`. `POST` and `DELETE` still use `STATUS_TOKEN`. Tests in `worker/test/feed.test.mjs` cover the empty feed, a missing token, a wrong token, the post password not being accepted as the read token, an authorized WebSocket, and `?token=` on the live feed only.
 - `worker/scripts/set-tz.sh` writes `TZ`. The deploy button is `https://deploy.workers.cloudflare.com/?url=https://github.com/pohstep/chief-status/tree/main/worker`.
 - The cask URL points at `Chief-Status-1.4.0.dmg`. `sha256` is `REPLACE_WITH_SHA256` on purpose.
+- Icon colour: UserDefaults key `iconColor` (`default` or `#RRGGBB`). Presets, in order: White `#FFFFFF`, Brown `#9A6D42`, Red `#E94347`, Deep orange `#E8663A`, Orange `#E9983A`, Green `#5ABF78`, Teal `#3BB5B0`, Blue `#3A86F4`, Purple `#8762F3`, Pink `#E85FA8`, Grey `#8E8E93`. Only the working cube uses it. Fixed: idle `#8E8E93`, failed `#E5484D`, stale `#111113` with the 404 face, needs-you `#4F5BE8`. The contrast outline follows Appearance (Light, Dark, or the system menu bar). `--render-preview` writes `icon-colours-light.png` and `icon-colours-dark.png` with Default and all eleven presets, in normal, stale, and needs-you.
 
 ## v1.3.1 — 2026-10-18
 

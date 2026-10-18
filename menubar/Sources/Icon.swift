@@ -368,12 +368,27 @@ enum FaceMotion {
     }
 }
 
+/// Fill for the working cube only. Idle, failed, stale and needs-you ignore this.
+enum WorkingFill {
+    /// Today's orange, with no extra outline.
+    case palette
+    /// The colour saved in Settings.
+    case stored
+    /// One preset or a custom colour, used by the preview sheets.
+    case colour(NSColor)
+}
+
 enum StatusIcon {
     static let pointSize: CGFloat = 18
 
-    static func image(tone: BarTone, pose: IconPose, staleDot: Bool = false) -> NSImage {
-        let fill: NSColor
-        let eye: NSColor
+    /// `barIsLight` forces the menu bar used for the contrast outline. Nil follows Appearance.
+    static func image(
+        tone: BarTone,
+        pose: IconPose,
+        staleDot: Bool = false,
+        working: WorkingFill = .stored,
+        barIsLight: Bool? = nil
+    ) -> NSImage {
         switch tone {
         case .black:
             let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
@@ -389,20 +404,36 @@ enum StatusIcon {
             }
             image.isTemplate = false
             return image
+        case .orange, .red, .grey:
+            break
+        }
+
+        let paintFill: NSColor
+        let paintEye: NSColor
+        let paintOutline: NSColor?
+        switch tone {
         case .orange:
-            fill = ChiefPalette.orange
-            eye = ChiefPalette.eye
+            let resolved = IconContrast.working(working, barIsLight: barIsLight)
+            paintFill = resolved.fill
+            paintEye = resolved.eye
+            paintOutline = resolved.outline
         case .red:
-            fill = ChiefPalette.red
-            eye = ChiefPalette.eyeOnRed
+            paintFill = ChiefPalette.red
+            paintEye = ChiefPalette.eyeOnRed
+            paintOutline = nil
         case .grey:
-            fill = ChiefPalette.grey
-            eye = ChiefPalette.eyeOnGrey
+            paintFill = ChiefPalette.grey
+            paintEye = ChiefPalette.eyeOnGrey
+            paintOutline = nil
+        case .black, .indigo:
+            paintFill = ChiefPalette.orange
+            paintEye = ChiefPalette.eye
+            paintOutline = nil
         }
 
         let pose = pose
         let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-            paint(fill: fill, eye: eye, pose: pose)
+            paint(fill: paintFill, eye: paintEye, outline: paintOutline, pose: pose)
             if staleDot {
                 paintStaleDot()
             }
@@ -414,7 +445,8 @@ enum StatusIcon {
 
     /// 18pt face, inset 1pt, corner radius 5. Eyes are 2.2×4.6pt ovals with a 3pt gap,
     /// centred as a pair on x = 9, bottoms at y = 8.6 before blink and bob.
-    private static func paint(fill: NSColor, eye: NSColor, pose: IconPose) {
+    /// A low-contrast working colour gets a thin outline. The fill itself is not changed.
+    private static func paint(fill: NSColor, eye: NSColor, outline: NSColor?, pose: IconPose) {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         if let graphics = NSGraphicsContext.current {
@@ -435,6 +467,12 @@ enum StatusIcon {
         let face = NSRect(x: 1, y: 1 + bob, width: 16, height: 16)
         fill.setFill()
         NSBezierPath(roundedRect: face, xRadius: 5, yRadius: 5).fill()
+        if let outline = outline {
+            let rim = NSBezierPath(roundedRect: face.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.6, yRadius: 4.6)
+            outline.setStroke()
+            rim.lineWidth = 1
+            rim.stroke()
+        }
 
         let eyeWidth: CGFloat = 2.2
         let fullHeight: CGFloat = 4.6
@@ -503,5 +541,95 @@ enum StatusIcon {
         let roomY = min(cy, pointSize - cy)
         guard roomX > 0, roomY > 0 else { return 1 }
         return min(1, roomX / halfW, roomY / halfH)
+    }
+}
+
+/// Contrast for a chosen working colour against the menu bar. Default orange is not passed through here.
+enum IconContrast {
+    /// Same fills the preview sheets use behind the cubes.
+    static let lightBar = NSColor(srgbRed: 0.93, green: 0.93, blue: 0.95, alpha: 1)
+    static let darkBar = NSColor(srgbRed: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+
+    static func working(_ working: WorkingFill, barIsLight: Bool?) -> (fill: NSColor, eye: NSColor, outline: NSColor?) {
+        switch working {
+        case .palette:
+            return (ChiefPalette.orange, ChiefPalette.eye, nil)
+        case .stored:
+            let choice = IconColorSetting.load()
+            if choice.isDefault {
+                return (ChiefPalette.orange, ChiefPalette.eye, nil)
+            }
+            return painted(choice.nsColor, barIsLight: barIsLight)
+        case .colour(let fill):
+            return painted(fill, barIsLight: barIsLight)
+        }
+    }
+
+    /// Dark eyes when they still show on the fill. A dark custom colour gets white eyes.
+    /// The fill is the user's colour either way.
+    private static func painted(_ fill: NSColor, barIsLight: Bool?) -> (fill: NSColor, eye: NSColor, outline: NSColor?) {
+        let eye: NSColor
+        if ratio(luminance(fill), luminance(ChiefPalette.eye)) >= 3 {
+            eye = ChiefPalette.eye
+        } else {
+            eye = NSColor.white
+        }
+        return (fill, eye, outline(for: fill, barIsLight: barIsLight))
+    }
+
+    /// Nil when the fill already clears the menu bar. Otherwise a thin opposite rim.
+    static func outline(for fill: NSColor, barIsLight: Bool?) -> NSColor? {
+        let light = menuBarIsLight(override: barIsLight)
+        let bar = light ? lightBar : darkBar
+        if ratio(luminance(fill), luminance(bar)) >= 3 {
+            return nil
+        }
+        if light {
+            return NSColor(srgbRed: 0.10, green: 0.10, blue: 0.12, alpha: 0.92)
+        }
+        return NSColor(white: 1, alpha: 0.75)
+    }
+
+    /// Light, Dark, or the system menu bar when Appearance is System.
+    static func menuBarIsLight(override: Bool?) -> Bool {
+        if let forced = override {
+            return forced
+        }
+        switch AppearanceChoice.stored() {
+        case .light:
+            return true
+        case .dark:
+            return false
+        case .system:
+            let appearance = NSAppearance.current ?? NSApp.effectiveAppearance
+            return appearance.bestMatch(from: [.aqua, .darkAqua]) != .darkAqua
+        }
+    }
+
+    static func luminance(_ color: NSColor) -> CGFloat {
+        let converted = color.usingColorSpace(.sRGB)
+        let rgb = converted ?? color
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        if !rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            return 0
+        }
+        return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+    }
+
+    private static func channel(_ value: CGFloat) -> CGFloat {
+        if value <= 0.04045 {
+            return value / 12.92
+        }
+        let linear = (Double(value) + 0.055) / 1.055
+        return CGFloat(pow(linear, 2.4))
+    }
+
+    private static func ratio(_ lhs: CGFloat, _ rhs: CGFloat) -> CGFloat {
+        let lighter = max(lhs, rhs)
+        let darker = min(lhs, rhs)
+        return (lighter + 0.05) / (darker + 0.05)
     }
 }

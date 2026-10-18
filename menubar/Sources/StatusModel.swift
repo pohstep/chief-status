@@ -187,6 +187,8 @@ final class StatusModel: ObservableObject {
     @Published var todayExpanded = true
     @Published var staleAfterMinutes = 60
     @Published var appearance: AppearanceChoice = .system
+    /// Working-cube colour. Default keeps today's orange. Warnings do not use this.
+    @Published var iconColor = IconColorSetting.load()
     /// The post password is kept in memory only, so Settings can show and copy the bot prompt.
     /// It is not written to disk and it is never logged.
     @Published var postPassword = ""
@@ -251,6 +253,7 @@ final class StatusModel: ObservableObject {
         alertOnFailure = ConfigStore.readAlert()
         todayExpanded = ConfigStore.readTodayExpanded()
         appearance = AppearanceChoice.stored()
+        iconColor = IconColorSetting.load()
         readToken = ReadTokenStore.read()
         openAtLogin = LoginItem.isEnabled()
         links = ConfigStore.readLinks()
@@ -468,6 +471,15 @@ final class StatusModel: ObservableObject {
         appearance = choice
         choice.store()
         choice.apply()
+        notify()
+    }
+
+    /// Saves the menu bar colour and redraws the cube on the next notify. No relaunch.
+    func setIconColor(_ next: IconColorSetting) {
+        let normalized = IconColorSetting(stored: IconColorSetting.normalize(next.stored))
+        if normalized == iconColor { return }
+        iconColor = normalized
+        normalized.save()
         notify()
     }
 

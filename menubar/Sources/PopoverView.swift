@@ -447,9 +447,85 @@ struct StatusPopoverView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(PanelTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
+            iconColour
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.top, 4)
+    }
+
+    private var iconColour: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Icon colour")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PanelTheme.ink)
+                Spacer(minLength: 8)
+                defaultIconButton
+            }
+            swatchRow(Array(IconSwatch.all.prefix(6)))
+            swatchRow(Array(IconSwatch.all.suffix(5)))
+            ColorPicker("Custom", selection: customIconColor, supportsOpacity: false)
+                .font(.system(size: 12))
+            Text("\(model.iconColor.title). The working cube uses this. Idle, failed, stale and needs-you keep their colours.")
+                .font(.system(size: 11))
+                .foregroundStyle(PanelTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var defaultIconButton: some View {
+        Group {
+            if model.iconColor.isDefault {
+                Button("Default") { model.setIconColor(IconColorSetting(stored: IconColorSetting.defaultToken)) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            } else {
+                Button("Default") { model.setIconColor(IconColorSetting(stored: IconColorSetting.defaultToken)) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func swatchRow(_ swatches: [IconSwatch]) -> some View {
+        HStack(spacing: 6) {
+            ForEach(swatches) { swatch in
+                swatchButton(swatch)
+            }
+        }
+    }
+
+    private func swatchButton(_ swatch: IconSwatch) -> some View {
+        let selected = model.iconColor.stored == swatch.hex
+        return Button(action: { model.setIconColor(IconColorSetting(stored: swatch.hex)) }) {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color(nsColor: swatch.nsColor))
+                .frame(width: 22, height: 22)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .strokeBorder(Color.black.opacity(0.28), lineWidth: 1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(selected ? PanelTheme.ink : Color.clear, lineWidth: 2)
+                        .padding(-3)
+                )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel(swatch.name)
+        .accessibilityAddTraits(selected ? .isSelected : AccessibilityTraits())
+    }
+
+    private var customIconColor: Binding<Color> {
+        Binding(
+            get: { Color(nsColor: model.iconColor.nsColor) },
+            set: { newValue in
+                let hex = IconColorSetting.hex(from: NSColor(newValue))
+                if IconColorSetting.nearly(hex, model.iconColor.pickerHex) { return }
+                model.setIconColor(IconColorSetting(stored: hex))
+            }
+        )
     }
 
     /// Address used to fill the prompt. The draft wins while Settings is open.
@@ -1682,7 +1758,8 @@ private func durationLabel(ms: Int) -> String {
 }
 
 /// `ChiefStatus --render-preview <folder>`: sample panels in light and dark, the 404 face at 28 and 20 pt,
-/// and every menu bar cube on a light and a dark bar. Nothing is read from or sent to the feed.
+/// every menu bar cube, and the icon colour presets in normal, stale and needs-you.
+/// Nothing is read from or sent to the feed.
 enum PreviewRenderer {
     static func run(folder: String) -> Int32 {
         let directory = URL(fileURLWithPath: (folder as NSString).expandingTildeInPath, isDirectory: true)
@@ -1731,17 +1808,71 @@ enum PreviewRenderer {
             ]
             let bar = HStack(spacing: 14) {
                 ForEach(0 ..< states.count, id: \.self) { index in
-                    Image(nsImage: StatusIcon.image(tone: states[index].tone, pose: IconPose(), staleDot: states[index].staleDot))
-                        .frame(width: 18, height: 18)
+                    Image(nsImage: StatusIcon.image(
+                        tone: states[index].tone,
+                        pose: IconPose(),
+                        staleDot: states[index].staleDot,
+                        working: .palette,
+                        barIsLight: !dark
+                    ))
+                    .frame(width: 18, height: 18)
                 }
             }
             .padding(.horizontal, 10)
             .frame(width: 180, height: 24)
             .background(dark ? Color(red: 0.12, green: 0.12, blue: 0.14) : Color(red: 0.93, green: 0.93, blue: 0.95))
             ok = write(bar, size: NSSize(width: 180, height: 24), dark: dark, to: directory.appendingPathComponent("menubar-\(name).png")) && ok
+
+            let colours = iconColourSheet(dark: dark)
+            ok = write(colours, size: NSSize(width: 324, height: 380), dark: dark, to: directory.appendingPathComponent("icon-colours-\(name).png")) && ok
         }
         print(ok ? "Wrote previews to \(directory.path)" : "Some previews failed")
         return ok ? 0 : 1
+    }
+
+    private static func iconColourSheet(dark: Bool) -> some View {
+        let ink = dark ? Color.white : Color.black
+        let presets: [(name: String, working: WorkingFill)] = IconSwatch.all.map { swatch in
+            (name: swatch.name, working: .colour(swatch.nsColor))
+        }
+        let rows: [(name: String, working: WorkingFill)] = [(name: "Default", working: .palette)] + presets
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(" ")
+                    .frame(width: 100, alignment: .leading)
+                Text("Normal")
+                    .frame(width: 48)
+                Text("Stale")
+                    .frame(width: 48)
+                Text("Needs you")
+                    .frame(width: 72)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(ink)
+            .frame(height: 16)
+            ForEach(0 ..< rows.count, id: \.self) { index in
+                HStack(spacing: 8) {
+                    Text(rows[index].name)
+                        .font(.system(size: 11))
+                        .foregroundStyle(ink)
+                        .frame(width: 100, alignment: .leading)
+                    Image(nsImage: StatusIcon.image(
+                        tone: .orange,
+                        pose: IconPose(),
+                        working: rows[index].working,
+                        barIsLight: !dark
+                    ))
+                    .frame(width: 48, height: 22)
+                    Image(nsImage: StatusIcon.image(tone: .black, pose: IconPose(), working: .palette))
+                        .frame(width: 48, height: 22)
+                    Image(nsImage: StatusIcon.image(tone: .indigo, pose: IconPose(), working: .palette))
+                        .frame(width: 72, height: 22)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 324, height: 380, alignment: .topLeading)
+        .background(dark ? Color(red: 0.12, green: 0.12, blue: 0.14) : Color(red: 0.93, green: 0.93, blue: 0.95))
     }
 
     private static func sampleModel() -> StatusModel {
