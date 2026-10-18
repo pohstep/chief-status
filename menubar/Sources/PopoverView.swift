@@ -346,15 +346,15 @@ struct StatusPopoverView: View {
             Text("Shown here so you can copy the bot prompt. Not saved.")
                 .font(.system(size: 11))
                 .foregroundStyle(PanelTheme.ink2)
-            TextField(
-                "Read token",
+            SecureField(
+                "Read token (optional)",
                 text: $model.readToken,
-                prompt: Text("Optional")
+                prompt: Text("Read token (optional)")
             )
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 12))
             .onSubmit { model.commitReadToken() }
-            Text("Optional. Only if this feed asks for one. Saved on this Mac, and sent when the app reads the feed.")
+            Text("Only if your feed is locked. Saved on this Mac and sent when the app reads the feed.")
                 .font(.system(size: 11))
                 .foregroundStyle(PanelTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)

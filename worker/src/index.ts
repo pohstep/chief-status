@@ -93,7 +93,7 @@ async function deleteBot(request: Request, env: Env, rawName: string): Promise<R
 }
 
 async function live(request: Request, env: Env): Promise<Response> {
-	const denied = await denyUnlessReader(request, env);
+	const denied = await denyUnlessReader(request, env, true);
 	if (denied) return denied;
 	if (request.method !== "GET") {
 		return json({ error: "method not allowed" }, 405, { Allow: "GET" });
@@ -145,6 +145,7 @@ function normalizePath(pathname: string): string {
 
 /**
  * When the READ_TOKEN secret is set, reading the feed requires Authorization: Bearer <token>.
+ * The live feed (/status/live) also accepts ?token=<token>, for clients that cannot set headers.
  * A missing or wrong token is 401 with an empty body. When the secret is unset, reading stays open.
  * The value is never logged.
  */
@@ -156,10 +157,20 @@ function configuredReadToken(env: Env): string | null {
 	return trimmed;
 }
 
-async function denyUnlessReader(request: Request, env: Env): Promise<Response | null> {
+async function denyUnlessReader(
+	request: Request,
+	env: Env,
+	allowQuery = false,
+): Promise<Response | null> {
 	const expected = configuredReadToken(env);
 	if (!expected) return null;
 	if (await authorized(request, expected)) return null;
+	if (allowQuery) {
+		const provided = new URL(request.url).searchParams.get("token") ?? "";
+		if (provided.length > 0 && provided.length <= 512 && (await tokenMatches(provided, expected))) {
+			return null;
+		}
+	}
 	return new Response(null, {
 		status: 401,
 		headers: { "Cache-Control": "no-store" },

@@ -190,16 +190,42 @@ After deploy, Cloudflare prints your feed's address, like `https://chief-status.
 
 6. **Paste that address into the app** (click the cube → **Settings**), and paste the same password into **Post password**. Either the plain address or the same address ending in `/status` works. Then copy the bot prompt. Click **Send a test post** if you want to see a face light up before a real bot reports.
 
+7. **Optional: lock the feed** so only your Mac can read it. See [Keep your feed private](#keep-your-feed-private). You can do this now or any time later.
+
 Keep the address and the password somewhere safe, like a password manager. Your bots need both.
 
 > Moving from v1.1: that version kept the feed in a Cloudflare storage box. New feeds do not create one. If you already updated to 1.2 or 1.3, the feed was copied across and you can ignore the old box. If you are still on 1.1, deploy this version and post each bot once, or deploy 1.3 first so it copies the old feed, then update.
 
 > [!NOTE]
-> Anyone who knows the address can **read** the bot names and their one-line task, unless you set a [read token](#read-token). Only someone with the post password can **change** anything. So never put passwords or private details in a task line.
+> Unless you lock it, anyone who knows the address can **read** the bot names and their one-line task. Only someone with the post password can **change** anything. So never put passwords or private details in a task line. See [Keep your feed private](#keep-your-feed-private).
 
 To see the raw feed yourself, open `https://chief-status.<your-subdomain>.workers.dev/status` in a browser.
 
 To change the password later, run `npx wrangler secret put STATUS_TOKEN` again in the `worker` folder, then give every bot the new one.
+
+### Keep your feed private
+
+**Why:** by default, anyone who finds your feed address can read your bot names and what they're working on. A **read token** is a second password, just for reading. Once it's set, the feed shows nothing to anyone without it: they get an empty "401 Unauthorized" reply.
+
+1. **Make a token.** In Terminal, this prints a long random string. Copy it.
+
+   ```bash
+   openssl rand -hex 24
+   ```
+
+2. **Give it to the feed.** In the `worker` folder, run this and paste the token when asked. From then on, reading the feed needs the token.
+
+   ```bash
+   npx wrangler secret put READ_TOKEN
+   ```
+
+3. **Give the same token to the app.** Click the cube → **Settings**, paste it into **Read token (optional)**, and click **Save**. If the app says *"This feed is locked. Add its read token in Settings."*, the token is missing or doesn't match.
+
+**Your bots don't change.** Posting still uses the `STATUS_TOKEN` password, exactly as before. The read token is only for reading.
+
+To read a locked feed by hand: `curl -H "Authorization: Bearer <read token>" https://chief-status.<your-subdomain>.workers.dev/status`. The live feed (`/status/live`) takes the same header, or `?token=<read token>` on the address for tools that can't send headers.
+
+To unlock it again: `npx wrangler secret delete READ_TOKEN`. To change it, run `npx wrangler secret put READ_TOKEN` again and paste the new token into the app.
 
 ## Teach your bots to report
 
@@ -377,7 +403,7 @@ What is stored on your Mac, in `~/Library/Application Support/Chief Status/`:
 | `config.plist` | Your feed address (`feedURL`), whether alerts are on (`alertOnFailure`), and whether **Finished today** is folded (`todayExpanded`). The post password is not in this file |
 | `links.json` | Optional. Your private chat links, by bot name. Never sent anywhere |
 
-The **Appearance** choice and the optional **Read token** are kept in the app's private preferences (`com.chiefstatus.menubar`, keys `appearance` and `readToken`). The read token is not in the Keychain. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
+The **Appearance** choice and the optional **Read token** are kept in the app's private preferences (`com.chiefstatus.menubar`, keys `appearance` and `readToken`). The read token is not in the Keychain, because an app without a paid Apple signature would ask for Keychain access again after every update. The post password is not saved at all: Settings only shows it so you can copy the bot prompt and the setup link.
 
 What is stored in your feed, on your own Cloudflare account:
 
@@ -386,10 +412,10 @@ What is stored in your feed, on your own Cloudflare account:
 | The `bots` list | Each bot's name, current status, one-line task, start time, colour and optional chat link |
 | Today's finished jobs | Bot name, task line, start and end time, how long it took, and done or failed. Cleared every day at midnight in your `TZ`, and capped at 200 a day |
 | The `STATUS_TOKEN` password | Kept as a Cloudflare secret. It is not in any file in this repository |
-| The `READ_TOKEN`, if you set one | Kept as a Cloudflare secret. When it is set, reading the feed needs it. When it is not set, reading stays open |
+| The `READ_TOKEN`, if you set one | Kept as a Cloudflare secret, only if you [lock the feed](#keep-your-feed-private). When it is set, reading the feed needs it. When it is not set, reading stays open |
 | An old v1.1 storage box | Not created for new feeds. See [Moving from v1.1](#set-up-the-feed) |
 
-None of this is in the repository, and nothing personal is built into the app or the `.dmg`. Without a read token, the feed can be read by anyone with its address, so keep task lines free of private details.
+None of this is in the repository, and nothing personal is built into the app or the `.dmg`. Unless you [lock it with a read token](#keep-your-feed-private), the feed can be read by anyone with its address, so keep task lines free of private details.
 
 ## Read token
 
@@ -397,7 +423,7 @@ Reading the feed is open unless you set a **read token**. Posting still uses the
 
 1. In the `worker` folder, pick a second long password and run `npx wrangler secret put READ_TOKEN`. Or add a secret named `READ_TOKEN` in the Cloudflare dashboard under **Workers & Pages → your worker → Settings → Variables and Secrets**.
 2. In the app, click the cube → **Settings** → **Read token**, paste the same value, and click **Save** (or just close the panel). It is stored in the app's private preferences, not the Keychain, and it is sent on `GET /status` and on the live feed as `Authorization: Bearer <token>`.
-3. Without that header, `GET /status` and the live feed answer `401` with an empty body. `POST` is unchanged: bots still send the post password, not the read token.
+3. Without that header, `GET /status` and the live feed answer `401` with an empty body. The live feed also accepts `?token=<read token>` for tools that cannot set a header. `GET /status` does not. `POST` is unchanged: bots still send the post password, not the read token.
 
 Leave `READ_TOKEN` unset and nothing about reading changes. To try it on your own computer before you deploy:
 
@@ -464,7 +490,7 @@ Feed settings live in `worker/wrangler.toml` under `[vars]`. The password is a s
 | `TZ` | `wrangler.toml`, or the dashboard after the deploy button | Your time zone, like `America/Los_Angeles` or `Asia/Shanghai`. Decides when "today" resets. `./scripts/set-tz.sh` writes it. Default `UTC` |
 | `STALE_MINUTES` | `wrangler.toml` | How long a bot can say "working" before it's marked **stale?**. Default `60` |
 | `STATUS_TOKEN` | `npx wrangler secret put STATUS_TOKEN`, or the dashboard | The password bots use to post. Never put it in a file |
-| `READ_TOKEN` | `npx wrangler secret put READ_TOKEN`, or the dashboard | Optional. When set, `GET /status` and the live feed need `Authorization: Bearer <token>`. When unset, reading stays open |
+| `READ_TOKEN` | `npx wrangler secret put READ_TOKEN`, or the dashboard | Optional. When set, `GET /status` and the live feed need `Authorization: Bearer <token>`. The live feed also accepts `?token=`. When unset, reading stays open |
 
 What the reporting script reads on each bot's computer:
 
@@ -482,7 +508,7 @@ The feed's web addresses:
 | `GET /status` | Everyone's current line, today's finished jobs, and the settings above. Open, unless `READ_TOKEN` is set, in which case it needs `Authorization: Bearer <READ_TOKEN>` and answers `401` with an empty body without it |
 | `POST /status` | Update one bot. Needs `Authorization: Bearer <STATUS_TOKEN>`. JSON body: `bot`, `status`, `task`, and optionally `started_at`, `color`, `url` |
 | `DELETE /status/<bot>` | Remove one bot and its jobs for today. Same password as `POST`. Answers `404` if there is no such bot. `scripts/delete-bot.sh` wraps it |
-| `GET /status/live` | The live WebSocket the app listens on. Same read rule as `GET /status`. If it drops, the app checks the feed every ~15 seconds instead |
+| `GET /status/live` | The live WebSocket the app listens on. Same Bearer rule as `GET /status`, and it also accepts `?token=<read token>`. If it drops, the app checks the feed every ~15 seconds instead |
 
 Run the feed's tests, or try it on your own computer before deploying (copy `worker/.dev.vars.example` to `worker/.dev.vars` and put a test password in it first):
 

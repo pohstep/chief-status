@@ -560,7 +560,7 @@ final class StatusModel: ObservableObject {
             return
         }
         if http.statusCode == 401 {
-            errorText = "This feed wants a read token. Add it in Settings."
+            errorText = "This feed is locked. Add its read token in Settings."
             notify()
             return
         }

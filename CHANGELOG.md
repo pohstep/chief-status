@@ -19,9 +19,24 @@ Details:
 - Targets are `-target arm64-apple-macos13` and `-target x86_64-apple-macos13`, then `lipo -create`. `ServiceManagement` is linked for the login-item switch.
 - URL scheme `chiefstatus` in `Info.plist`. `chiefstatus://setup?feed=…&password=…` fills the feed address and the in-memory post password. The Apple event handler and `application(_:open:)` do not log the URL.
 - Read token: `UserDefaults` key `readToken` in `com.chiefstatus.menubar`. Sent as `Authorization: Bearer` on `GET /status` and the live WebSocket only. The test post uses the post password, which stays in memory.
-- Worker: `configuredReadToken` treats a missing or blank `READ_TOKEN` as unset. A refusal is `new Response(null, { status: 401 })`. `POST` and `DELETE` still use `STATUS_TOKEN`. Tests in `worker/test/feed.test.mjs` cover the empty feed, a missing token, a wrong token, the post password not being accepted as the read token, and an authorized WebSocket.
+- Worker: `configuredReadToken` treats a missing or blank `READ_TOKEN` as unset. A refusal is `new Response(null, { status: 401 })`. `GET /status` takes the Bearer header only. `/status/live` also accepts `?token=<token>`. `POST` and `DELETE` still use `STATUS_TOKEN`. Tests in `worker/test/feed.test.mjs` cover the empty feed, a missing token, a wrong token, the post password not being accepted as the read token, an authorized WebSocket, and `?token=` on the live feed only.
 - `worker/scripts/set-tz.sh` writes `TZ`. The deploy button is `https://deploy.workers.cloudflare.com/?url=https://github.com/pohstep/chief-status/tree/main/worker`.
 - The cask URL points at `Chief-Status-1.4.0.dmg`. `sha256` is `REPLACE_WITH_SHA256` on purpose.
+
+## v1.3.1 — 2026-10-18
+
+In plain words:
+
+- **You can now keep your feed private.** Set a read token on the feed, paste the same token into the app, and nobody else can read your bots' names or tasks. Without the token, the feed replies with an empty "401 Unauthorized". See [Keep your feed private](README.md#keep-your-feed-private).
+- **Settings has a new Read token (optional) field.** It's hidden as you type, kept on this Mac only, and sent whenever the app reads the feed.
+- **A clear message** when the feed is locked and the app has no token, or the wrong one: *"This feed is locked. Add its read token in Settings."*
+- **Your bots don't change.** Posting still uses the same password. A feed without a read token works exactly as before.
+
+Details:
+
+- Worker: the `READ_TOKEN` secret is optional and is not in `secrets.required`. When it's set, `GET /status` and `/status/live` need `Authorization: Bearer <token>`; `/status/live` also accepts `?token=<token>`. A missing or wrong token gets 401 with an empty body. The post password is not accepted as a read token. `POST` and `DELETE` are unchanged. `GET /` stays open.
+- App: the token is in UserDefaults (`com.chiefstatus.menubar`, key `readToken`), not the Keychain, so updates don't bring Keychain prompts. It's sent as a Bearer header on the feed read and on the live connection, only when it's not empty.
+- Tests: `npm test` now also starts a second local feed with `READ_TOKEN` set and checks 401 with an empty body for no token, a wrong token and the post password, then 200 and a live snapshot with the right token (header or `?token=`).
 
 ## v1.3.0 — 2026-10-18
 

@@ -228,6 +228,12 @@ async function runReadTokenTests() {
 			"the authorized snapshot should include the posted bot",
 		);
 
+		const byQuery = await liveSnapshot(`${base.replace("http", "ws")}/status/live?token=${readToken}`);
+		assert(byQuery[0].type === "snapshot", "the live feed should also accept ?token=<read token>");
+		await liveRejected(`${base.replace("http", "ws")}/status/live?token=wrong-token`);
+		const queryOnGet = await request(`${base}/status?token=${readToken}`);
+		assert(queryOnGet.status === 401, `?token= is only for the live feed, GET /status was ${queryOnGet.status}`);
+
 		const upgrade = await request(`${base}/status/live`, { headers: { Authorization: `Bearer ${readToken}` } });
 		assert(upgrade.status === 426, `authorized live feed without an upgrade should stay 426, was ${upgrade.status}`);
 	} finally {
