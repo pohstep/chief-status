@@ -11,5 +11,18 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "wrangler": "^4.151.1"
+  },
+  "cloudflare": {
+    "bindings": {
+      "STATUS_TOKEN": {
+        "description": "A long password your bots send when they post. Make one up and keep it. This is not the optional read token."
+      },
+      "TZ": {
+        "description": "Your time zone, like America/Los_Angeles or Asia/Shanghai. This decides when the day resets. UTC is the default."
+      },
+      "BOTS": {
+        "description": "Optional starter list of bot names, separated by commas. Leave this empty to start with no rows."
+      }
+    }
   }
 }

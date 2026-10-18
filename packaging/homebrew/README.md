@@ -1,48 +1,24 @@
-# Homebrew tap
+# Homebrew cask
 
-Chief Status is built on the Mac by `install.sh`. This formula wraps that script. It does not ship a prebuilt app.
+This folder is the recipe for installing the release disk image. It is not the tap itself.
 
-The tap is a separate repository, `pohstep/homebrew-tap`. Create that public repo yourself, then copy this formula in. Do not put the formula only inside chief-status and expect `brew install` to find it.
+Copy `Casks/chief-status.rb` into the public repo `pohstep/homebrew-tap` (that repo is separate from this one). Its `sha256` must match `Chief-Status-1.4.0.dmg` on the GitHub release. For a new release, put in the checksum that `./packaging/make-dmg.sh` prints.
 
-From a folder next to your chief-status checkout:
+The old `--HEAD` formula, which rebuilt the app from source, is gone. The cask installs the `.dmg`.
 
-```bash
-mkdir -p homebrew-tap/Formula
-cp packaging/homebrew/Formula/chief-status.rb homebrew-tap/Formula/
-cd homebrew-tap
-git init
-git add Formula/chief-status.rb
-git commit -m "Add the Chief Status formula"
-```
-
-Create the public GitHub repo `pohstep/homebrew-tap`, then:
-
-```bash
-git remote add origin https://github.com/pohstep/homebrew-tap.git
-git branch -M main
-git push -u origin main
-```
-
-On the Mac:
+On a Mac, once the tap has the cask:
 
 ```bash
 brew tap pohstep/tap
-brew install --HEAD pohstep/tap/chief-status
-chief-status
+brew install --cask chief-status
 ```
 
-`brew tap pohstep/tap` reads `github.com/pohstep/homebrew-tap`. `--HEAD` clones `github.com/pohstep/chief-status` and runs `install.sh` from the formula, which still builds with `swiftc` into `~/Applications` and still installs the login item.
+`brew tap pohstep/tap` reads `github.com/pohstep/homebrew-tap`. The cask puts **Chief Status** in `/Applications`. It does not build with `swiftc`.
 
-To pass the feed address:
+The app is unsigned. The cask's caveat says how to allow it: **Open Anyway** in **System Settings → Privacy & Security**, or:
 
 ```bash
-chief-status https://chief-status.<your-subdomain>.workers.dev/status
+xattr -dr com.apple.quarantine "/Applications/Chief Status.app"
 ```
 
-`./install.sh` in a git checkout keeps working, with or without Homebrew.
-
-After you tag a release, replace the `head` line in the formula with the commented `url` and `sha256`, push that change to `pohstep/homebrew-tap`, and install with:
-
-```bash
-brew install pohstep/tap/chief-status
-```
+`./install.sh` in a checkout of this repo still builds and installs into `~/Applications`, with or without Homebrew.

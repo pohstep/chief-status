@@ -201,7 +201,7 @@ async function runReadTokenTests() {
 
 		const opened = await request(`${base}/status`, { headers: { Authorization: `Bearer ${readToken}` } });
 		assert(opened.status === 200, `GET /status with the read token ${opened.status} ${JSON.stringify(opened.body)}`);
-		assert(Array.isArray(opened.body.bots), "the read token should get the bot list");
+		assert(Array.isArray(opened.body.bots) && opened.body.bots.length === 0, "a protected feed still starts empty");
 
 		const posted = await request(`${base}/status`, {
 			method: "POST",
@@ -260,18 +260,14 @@ async function main() {
 		assert(first.status === 200, `GET /status ${first.status} ${JSON.stringify(first.body)}`);
 		assert(Array.isArray(first.body.bots), "bots should be an array");
 		assert(
-			first.body.bots.map((bot) => bot.bot).join(",") === "Agent1,Agent2",
-			`seed order was ${first.body.bots.map((bot) => bot.bot).join(",")}`,
-		);
-		assert(
-			first.body.bots.every((bot) => bot.status === "idle" && bot.task === ""),
-			"seed bots should be idle",
+			first.body.bots.length === 0,
+			`a new feed should start empty, saw ${first.body.bots.map((bot) => bot.bot).join(",")}`,
 		);
 		assert(first.headers.get("cache-control") === "no-store", "GET should not be cached");
 
 		const again = await request(`${base}/status/`);
 		assert(again.status === 200, "trailing slash should work");
-		assert(again.body.bots[0].bot === "Agent1", "second read should keep the seed");
+		assert(again.body.bots.length === 0, "second read should stay empty");
 
 		const noAuth = await request(`${base}/status`, {
 			method: "POST",
@@ -320,9 +316,10 @@ async function main() {
 		const after = await request(`${base}/status`);
 		const agent1 = after.body.bots.find((bot) => bot.bot === "Agent1");
 		const agent2 = after.body.bots.find((bot) => bot.bot === "Agent2");
+		assert(agent1, "Agent1 should exist after its first post");
 		assert(agent1.status === "working", "Agent1 should be working");
 		assert(agent1.task === "drafting the homepage", "task should be stored");
-		assert(agent2.status === "idle", "other bots should stay idle");
+		assert(!agent2, "a bot that has not posted should not be seeded");
 
 		const replaced = await request(`${base}/status`, {
 			method: "POST",
@@ -360,8 +357,7 @@ async function main() {
 		assert(added.status === 200, `add bot ${added.status}`);
 		const withExtra = await request(`${base}/status`);
 		assert(
-			withExtra.body.bots.map((bot) => bot.bot).join(",") ===
-				"Agent1,Agent2,Sprocket",
+			withExtra.body.bots.map((bot) => bot.bot).join(",") === "Agent1,Sprocket",
 			`order ${withExtra.body.bots.map((bot) => bot.bot).join(",")}`,
 		);
 
@@ -544,7 +540,7 @@ async function main() {
 		);
 		const names = (await request(`${base}/status`)).body.bots.map((bot) => bot.bot);
 		assert(names.includes("Widget"), `Widget should register itself, saw ${names.join(",")}`);
-		assert(names.indexOf("Agent1") < names.indexOf("Widget"), "pre-seeded bots stay ahead of a new one");
+		assert(names.indexOf("Agent1") < names.indexOf("Widget"), "bots stay in the order they first posted");
 
 		const keptColor = await postStatus({
 			bot: "Widget",

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 enum ConfigStore {
     static var directory: URL {
@@ -163,6 +164,254 @@ enum ReadTokenStore {
             UserDefaults.standard.set(trimmed, forKey: defaultsKey)
         }
     }
+}
+
+/// Open at login, the same switch Wordbit uses. macOS 13 ServiceManagement.
+enum LoginItem {
+    static func isEnabled() -> Bool {
+        return SMAppService.mainApp.status == .enabled
+    }
+
+    static func needsApproval() -> Bool {
+        return SMAppService.mainApp.status == .requiresApproval
+    }
+
+    static func setEnabled(_ on: Bool) throws {
+        let status = SMAppService.mainApp.status
+        if on {
+            if status != .enabled {
+                try SMAppService.mainApp.register()
+            }
+        } else if status == .enabled || status == .requiresApproval {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+}
+
+/// Feed address and post password carried by chiefstatus://setup and the bot prompt.
+/// These strings are shown in Settings and copied to the clipboard. Do not log them.
+enum SetupShare {
+    static let guide = "https://github.com/pohstep/chief-status#set-up-the-feed"
+    static let deployPage = "https://deploy.workers.cloudflare.com/?url=https://github.com/pohstep/chief-status/tree/main/worker"
+
+    struct Link {
+        var feed: String
+        var password: String
+    }
+
+    static func parse(_ url: URL) -> Link? {
+        guard let scheme = url.scheme, scheme.lowercased() == "chiefstatus" else { return nil }
+        let host = url.host?.lowercased() ?? ""
+        if host != "setup" { return nil }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        var feed = ""
+        var password = ""
+        let items = components.queryItems ?? []
+        for item in items {
+            let value = item.value ?? ""
+            if item.name == "feed" {
+                feed = value
+            } else if item.name == "password" {
+                password = value
+            }
+        }
+        return Link(feed: feed, password: password)
+    }
+
+    static func link(feed: String, password: String) -> String? {
+        guard let normalized = ConfigStore.normalize(feed), !password.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "chiefstatus"
+        components.host = "setup"
+        components.queryItems = [
+            URLQueryItem(name: "feed", value: normalized),
+            URLQueryItem(name: "password", value: password),
+        ]
+        return components.string
+    }
+
+    /// One paste for a bot. The address and the post password are filled in.
+    /// Returns nil until both are present. Never log the result.
+    static func botPrompt(feed: String, password: String) -> String? {
+        guard let normalized = ConfigStore.normalize(feed), !password.isEmpty else { return nil }
+        let address = shellEscape(normalized)
+        let secret = shellEscape(password)
+        let working = curl(address, secret, "working", "one short line about the job", ",\"color\":\"#3B82F6\"")
+        let done = curl(address, secret, "done", "what finished", "")
+        let failed = curl(address, secret, "failed", "what broke", "")
+        let needs = curl(address, secret, "needs_input", "the question you need answered", "")
+        let idle = curl(address, secret, "idle", "", "")
+        return """
+Your name is Agent1.
+Your colour is #3B82F6.
+
+You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it. Change Agent1 and the colour to this bot's own.
+
+When you start a real job that will take more than a minute or two, post to Chief Status with curl. Skip quick chat replies and lookups.
+
+Start of job:
+\(working)
+
+Job finished:
+\(done)
+
+Job failed:
+\(failed)
+
+Waiting on me:
+\(needs)
+
+Then always:
+\(idle)
+
+If you hand work to a background helper, post working while it runs, and done when it comes back.
+Never put passwords or secrets in the task line.
+"""
+    }
+
+    private static func curl(_ address: String, _ secret: String, _ status: String, _ task: String, _ extra: String) -> String {
+        return "curl -sS -X POST \"\(address)\" -H \"Authorization: Bearer \(secret)\" -H \"Content-Type: application/json\" -d '{\"bot\":\"Agent1\",\"status\":\"\(status)\",\"task\":\"\(task)\"\(extra)}'"
+    }
+
+    /// Escape a value that will sit inside double quotes in a shell command.
+    private static func shellEscape(_ value: String) -> String {
+        var out = ""
+        for character in value {
+            if character == "\\" || character == "\"" || character == "$" || character == "`" {
+                out.append("\\")
+            }
+            out.append(character)
+        }
+        return out
+    }
+}
+
+/// Menu bar icon colour. UserDefaults domain com.chiefstatus.menubar, key "iconColor".
+/// "default" keeps today's orange working cube. A "#RRGGBB" value is a preset or a custom colour.
+/// Missing and unreadable values are default, so existing users keep the current icon.
+struct IconColorSetting: Equatable {
+    var stored: String
+
+    static let defaultsKey = "iconColor"
+    static let defaultToken = "default"
+
+    var isDefault: Bool { stored == IconColorSetting.defaultToken }
+
+    var title: String {
+        if isDefault { return "Default" }
+        let match = IconSwatch.all.first { $0.hex == stored }
+        if let match = match { return match.name }
+        return "Custom"
+    }
+
+    /// Colour shown in the picker. Default shows today's orange, without saving it.
+    var nsColor: NSColor {
+        if isDefault { return ChiefPalette.orange }
+        return IconColorSetting.color(hex: stored) ?? ChiefPalette.orange
+    }
+
+    /// Hex the picker already represents, so a no-op write does not leave Default.
+    var pickerHex: String {
+        return IconColorSetting.hex(from: nsColor)
+    }
+
+    static func load() -> IconColorSetting {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        return IconColorSetting(stored: normalize(raw))
+    }
+
+    func save() {
+        UserDefaults.standard.set(stored, forKey: IconColorSetting.defaultsKey)
+    }
+
+    static func normalize(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.lowercased() == defaultToken {
+            return defaultToken
+        }
+        if let hex = canonicalHex(trimmed) {
+            return hex
+        }
+        return defaultToken
+    }
+
+    static func canonicalHex(_ raw: String) -> String? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if text.hasPrefix("#") {
+            text.removeFirst()
+        }
+        if text.count != 6 { return nil }
+        let digits = CharacterSet(charactersIn: "0123456789ABCDEF")
+        if text.rangeOfCharacter(from: digits.inverted) != nil {
+            return nil
+        }
+        return "#" + text
+    }
+
+    static func color(hex: String) -> NSColor? {
+        guard let canonical = canonicalHex(hex) else { return nil }
+        let text = String(canonical.dropFirst())
+        guard let value = UInt32(text, radix: 16) else { return nil }
+        let red = CGFloat((value >> 16) & 0xFF) / 255
+        let green = CGFloat((value >> 8) & 0xFF) / 255
+        let blue = CGFloat(value & 0xFF) / 255
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
+    }
+
+    static func hex(from color: NSColor) -> String {
+        guard let rgb = color.usingColorSpace(.sRGB) else {
+            return "#F39C28"
+        }
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
+    }
+
+    /// True when two hex colours are the same, allowing for picker rounding.
+    static func nearly(_ lhs: String, _ rhs: String, tolerance: CGFloat = 0.04) -> Bool {
+        if lhs == rhs { return true }
+        guard let left = color(hex: lhs), let right = color(hex: rhs) else { return false }
+        let red = abs(left.redComponent - right.redComponent)
+        let green = abs(left.greenComponent - right.greenComponent)
+        let blue = abs(left.blueComponent - right.blueComponent)
+        return red < tolerance && green < tolerance && blue < tolerance
+    }
+
+    private static func byte(_ channel: CGFloat) -> Int {
+        let scaled = Int((channel * 255).rounded())
+        if scaled < 0 { return 0 }
+        if scaled > 255 { return 255 }
+        return scaled
+    }
+}
+
+/// The eleven icon presets, in Settings order. Default and Custom are separate.
+struct IconSwatch: Equatable, Identifiable {
+    var name: String
+    var hex: String
+
+    var id: String { hex }
+
+    var nsColor: NSColor {
+        return IconColorSetting.color(hex: hex) ?? ChiefPalette.orange
+    }
+
+    static let all: [IconSwatch] = [
+        IconSwatch(name: "White", hex: "#FFFFFF"),
+        IconSwatch(name: "Brown", hex: "#9A6D42"),
+        IconSwatch(name: "Red", hex: "#E94347"),
+        IconSwatch(name: "Deep orange", hex: "#E8663A"),
+        IconSwatch(name: "Orange", hex: "#E9983A"),
+        IconSwatch(name: "Green", hex: "#5ABF78"),
+        IconSwatch(name: "Teal", hex: "#3BB5B0"),
+        IconSwatch(name: "Blue", hex: "#3A86F4"),
+        IconSwatch(name: "Purple", hex: "#8762F3"),
+        IconSwatch(name: "Pink", hex: "#E85FA8"),
+        IconSwatch(name: "Grey", hex: "#8E8E93"),
+    ]
 }
 
 /// Settings → Appearance. Stored in UserDefaults (com.chiefstatus.menubar, key "appearance").

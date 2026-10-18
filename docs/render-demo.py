@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Render docs/demo.gif, docs/panel.png, docs/hero.png and docs/icon.png.
 
+Since v1.4.0, docs/panel.png is the app's own `ChiefStatus --render-preview` panel-light.png,
+and docs/hero.png places that panel on this script's background. Re-running this script
+draws the older v1.3 faces, so keep it to demo.gif and icon.png.
+
 The panel shows one fresh working card and one maybe-stale card (black, 404 face).
 
 This is a faithful port of the menu-bar drawing and motion in

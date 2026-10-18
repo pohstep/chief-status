@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.4.0 — 2026-10-19
+
+In plain words:
+
+- **One download for Apple silicon and Intel.** `./install.sh` and `./packaging/make-dmg.sh` each build both chip types and join them with `lipo`.
+- **A new feed starts empty.** `BOTS` ships as `""`, and the worker no longer falls back to Agent1 and Agent2.
+- **First run has a next step.** Settings says **No feed yet? Set one up**, **Send a test post**, and **Deploy to Cloudflare**, instead of only "Paste your feed address to begin."
+- **A curl prompt with the address and password filled in**, plus a `chiefstatus://setup?feed=…` link that fills in the app. The app shows and copies them. It does not save the post password, and it does not log it.
+- **Open at login** in Settings, using the macOS 13 login-item switch.
+- **No storage box for new feeds.** The KV binding is gone. A short note covers moving from v1.1. Setup asks for your time zone and writes `TZ`.
+- **Optional read token.** When the `READ_TOKEN` secret is set, `GET /status` and the live feed need `Authorization: Bearer <token>` and answer `401` with an empty body without it. When it is unset, reading stays open. The app keeps the token in its private preferences (not the Keychain) and sends it on GET and on the WebSocket.
+- **Icon colour.** Settings → Icon colour: Default (today's orange), eleven swatches, or a custom colour. It colours the working cube, the stale **404** cube and the needs-you **?** cube, updates the menu bar at once, and is kept in preferences (`iconColor`). Idle grey and failed red stay as they are. The **404**, the **?** and the eyes are dark or white, whichever reads better on the colour. No outlines.
+- **Stale and needs-you faces keep the bot's colour.** In the panel, a maybe-stale bot's face stays in its own colour with **404** on it, and a needs-you face stays in its own colour with a **?**. The cards and the sort order are unchanged.
+- **Homebrew cask** at `packaging/homebrew/Casks/chief-status.rb`, with the unsigned-app caveat. The old `--HEAD` formula is gone.
+- README paths say `/Applications` for the disk image and `~/Applications` for `./install.sh`, and they say what `BOTS` is.
+
+Details:
+
+- Targets are `-target arm64-apple-macos13` and `-target x86_64-apple-macos13`, then `lipo -create`. `ServiceManagement` is linked for the login-item switch.
+- URL scheme `chiefstatus` in `Info.plist`. `chiefstatus://setup?feed=…&password=…` fills the feed address and the in-memory post password. The Apple event handler and `application(_:open:)` do not log the URL.
+- Read token: `UserDefaults` key `readToken` in `com.chiefstatus.menubar`. Sent as `Authorization: Bearer` on `GET /status` and the live WebSocket only. The test post uses the post password, which stays in memory.
+- Worker: `configuredReadToken` treats a missing or blank `READ_TOKEN` as unset. A refusal is `new Response(null, { status: 401 })`. `GET /status` takes the Bearer header only. `/status/live` also accepts `?token=<token>`. `POST` and `DELETE` still use `STATUS_TOKEN`. Tests in `worker/test/feed.test.mjs` cover the empty feed, a missing token, a wrong token, the post password not being accepted as the read token, an authorized WebSocket, and `?token=` on the live feed only.
+- `worker/scripts/set-tz.sh` writes `TZ`. The deploy button is `https://deploy.workers.cloudflare.com/?url=https://github.com/pohstep/chief-status/tree/main/worker`.
+- The cask URL points at `Chief-Status-1.4.0.dmg`. `sha256` is the checksum of that disk image.
+- Icon colour: UserDefaults key `iconColor` (`default` or `#RRGGBB`). Presets, in order: White `#FFFFFF`, Brown `#9A6D42`, Red `#E94347`, Deep orange `#E8663A`, Orange `#E9983A`, Green `#5ABF78`, Teal `#3BB5B0`, Blue `#3A86F4`, Purple `#8762F3`, Pink `#E85FA8`, Grey `#8E8E93`. The working, stale (404) and needs-you (?) cubes use it; Default is `#F39C28`. Fixed: idle `#8E8E93`, failed `#E5484D`. The mark and eye ink is `#1A1410` or white, whichever has the higher contrast ratio with the fill. The old black stale cube, its light rim, the indigo `#4F5BE8` menu bar cube and the contrast outline are gone. The small black stale dot on the working cube stays. `--render-preview` writes `icon-colours-light.png` and `icon-colours-dark.png` with Default and all eleven presets, in normal, stale, and needs-you.
+
 ## v1.3.1 — 2026-10-18
 
 In plain words:

@@ -1,3 +1,9 @@
 # Copy this file to .dev.vars for local development.
 # .dev.vars is not committed. The real password is a Worker secret.
 STATUS_TOKEN=replace-with-a-long-password
+
+# READ_TOKEN is optional. Do not put it here: with secrets.required set, wrangler
+# only loads STATUS_TOKEN from this file. To try a read token locally:
+#   npx wrangler dev --var READ_TOKEN:a-local-test-token
+# When that secret is set on the Worker, GET /status and /status/live require
+# Authorization: Bearer <token>. Leave it unset and reading stays open.

@@ -30,11 +30,6 @@ if ! command -v swiftc >/dev/null 2>&1; then
 	exit 1
 fi
 
-if [ "$(uname -m)" != "x86_64" ]; then
-	echo "This Mac is $(uname -m). Chief Status is built for an Intel Mac."
-	echo "The build will still target Intel (x86_64)."
-fi
-
 if command -v xcrun >/dev/null 2>&1; then
 	SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 	export SDKROOT
@@ -90,25 +85,41 @@ if [ "$#" -eq 1 ]; then
 	write_plist "$(normalize_feed "$1")"
 fi
 
-echo "Building Chief Status. This can take a minute."
+echo "Building Chief Status for Apple silicon and Intel. This can take a minute."
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 
-if ! swiftc \
-	-target x86_64-apple-macos13.0 \
-	-O \
-	-framework AppKit \
-	-framework SwiftUI \
-	-framework UserNotifications \
-	-o "$BUILD/ChiefStatus" \
-	"$ROOT/menubar/Sources/Config.swift" \
-	"$ROOT/menubar/Sources/Icon.swift" \
-	"$ROOT/menubar/Sources/StatusModel.swift" \
-	"$ROOT/menubar/Sources/PopoverView.swift" \
-	"$ROOT/menubar/Sources/main.swift"; then
-	echo "The build failed. The messages above are from the compiler."
+SOURCES=(
+	"$ROOT/menubar/Sources/Config.swift"
+	"$ROOT/menubar/Sources/Icon.swift"
+	"$ROOT/menubar/Sources/StatusModel.swift"
+	"$ROOT/menubar/Sources/PopoverView.swift"
+	"$ROOT/menubar/Sources/main.swift"
+)
+
+compile_slice() {
+	local arch="$1"
+	local out="$2"
+	swiftc \
+		-target "${arch}-apple-macos13" \
+		-O \
+		-framework AppKit \
+		-framework SwiftUI \
+		-framework UserNotifications \
+		-framework ServiceManagement \
+		-o "$out" \
+		"${SOURCES[@]}"
+}
+
+if ! compile_slice arm64 "$BUILD/ChiefStatus-arm64"; then
+	echo "The Apple silicon build failed. The messages above are from the compiler."
 	exit 1
 fi
+if ! compile_slice x86_64 "$BUILD/ChiefStatus-x86_64"; then
+	echo "The Intel build failed. The messages above are from the compiler."
+	exit 1
+fi
+lipo -create "$BUILD/ChiefStatus-arm64" "$BUILD/ChiefStatus-x86_64" -output "$BUILD/ChiefStatus"
 
 APP="$BUILD/Chief Status.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

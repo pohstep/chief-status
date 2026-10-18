@@ -219,7 +219,7 @@ export class StatusRoom extends DurableObject<Env> {
 	}
 
 	private starters(): Starter[] {
-		const bots = typeof this.env.BOTS === "string" ? this.env.BOTS : "Agent1,Agent2";
+		const bots = typeof this.env.BOTS === "string" ? this.env.BOTS : "";
 		const urls = typeof this.env.BOT_URLS === "string" ? this.env.BOT_URLS : "";
 		return startersFrom(bots, urls);
 	}
@@ -234,16 +234,19 @@ export class StatusRoom extends DurableObject<Env> {
 		return staleMinutes(raw);
 	}
 
+	/** v1.1 kept bots in a KV namespace. New feeds have no STATUS binding, so this is a no-op. */
 	private async readKvBots(): Promise<BotRow[]> {
+		const kv = (this.env as { STATUS?: KVNamespace }).STATUS;
+		if (!kv) return [];
 		try {
-			const raw = await this.env.STATUS.get(INDEX_KEY);
+			const raw = await kv.get(INDEX_KEY);
 			if (!raw) return [];
 			const parsed: unknown = JSON.parse(raw);
 			if (!Array.isArray(parsed)) return [];
 			const bots: BotRow[] = [];
 			for (const name of parsed) {
 				if (typeof name !== "string" || !name) continue;
-				const stored = await this.env.STATUS.get(`bot:${name}`);
+				const stored = await kv.get(`bot:${name}`);
 				bots.push(stored ? this.parseStored(stored, name) : this.idle(name, ""));
 			}
 			return bots;

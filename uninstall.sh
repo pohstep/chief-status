@@ -21,6 +21,7 @@ fi
 
 rm -f "$PLIST"
 
-echo "Chief Status is no longer set to open at login."
+echo "Chief Status is no longer set to open at login by the install script."
+echo "If you also turned on Open at login in the app, switch it off in System Settings → General → Login Items."
 echo "The feed address is still in:"
 echo "  ${HOME}/Library/Application Support/Chief Status/config.plist"

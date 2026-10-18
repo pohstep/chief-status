@@ -8,12 +8,8 @@ enum ChiefPalette {
     static let red = NSColor(srgbRed: 229.0 / 255.0, green: 72.0 / 255.0, blue: 77.0 / 255.0, alpha: 1)
     static let eyeOnRed = NSColor(srgbRed: 42.0 / 255.0, green: 16.0 / 255.0, blue: 18.0 / 255.0, alpha: 1)
     static let done = NSColor(srgbRed: 46.0 / 255.0, green: 184.0 / 255.0, blue: 102.0 / 255.0, alpha: 1)
-    /// Maybe stale: a lost-signal black. The light rim keeps it visible on a dark menu bar.
+    /// The small "another bot is stale" dot on the working cube.
     static let black = NSColor(srgbRed: 17.0 / 255.0, green: 17.0 / 255.0, blue: 19.0 / 255.0, alpha: 1)
-    static let blackRim = NSColor(white: 1, alpha: 0.55)
-    static let blackInk = NSColor(white: 1, alpha: 1)
-    /// Needs input: indigo #4F5BE8, hue 235°, at least 19° from every bot colour in the feed.
-    static let indigo = NSColor(srgbRed: 79.0 / 255.0, green: 91.0 / 255.0, blue: 232.0 / 255.0, alpha: 1)
 }
 
 enum BarTone: Equatable {
@@ -27,8 +23,9 @@ enum BarTone: Equatable {
 }
 
 /// What the menu bar cube shows, in priority order:
-/// any failed → red. Else any bot needs input → indigo "?" cube. Else any working bot that posted in the last 30 min → orange,
-/// plus a small black dot if another working bot is stale. Else any stale working bot → black 404 cube.
+/// any failed → red. Else any bot needs input → "?" cube. Else any working bot that posted in the last 30 min → working cube,
+/// plus a small black dot if another working bot is stale. Else any stale working bot → "404" cube.
+/// The working, "?" and "404" cubes all use the icon colour from Settings (Default is today's orange).
 /// Else grey (idle or finished).
 struct BarState: Equatable {
     var tone: BarTone
@@ -368,41 +365,68 @@ enum FaceMotion {
     }
 }
 
+/// Fill for the working, stale "404" and needs-you "?" cubes. Idle grey and failed red ignore this.
+enum WorkingFill {
+    /// Today's orange.
+    case palette
+    /// The colour saved in Settings.
+    case stored
+    /// One preset or a custom colour, used by the preview sheets.
+    case colour(NSColor)
+}
+
 enum StatusIcon {
     static let pointSize: CGFloat = 18
 
-    static func image(tone: BarTone, pose: IconPose, staleDot: Bool = false) -> NSImage {
-        let fill: NSColor
-        let eye: NSColor
+    static func image(
+        tone: BarTone,
+        pose: IconPose,
+        staleDot: Bool = false,
+        working: WorkingFill = .stored
+    ) -> NSImage {
         switch tone {
         case .black:
+            let fill = IconInk.fill(working)
+            let ink = IconInk.ink(on: fill)
             let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-                paintMark("404", fill: ChiefPalette.black, rim: ChiefPalette.blackRim, size: 7.5)
+                paintMark("404", fill: fill, ink: ink, size: 7.5)
                 return true
             }
             image.isTemplate = false
             return image
         case .indigo:
+            let fill = IconInk.fill(working)
+            let ink = IconInk.ink(on: fill)
             let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-                paintMark("?", fill: ChiefPalette.indigo, rim: NSColor(white: 1, alpha: 0.35), size: 12)
+                paintMark("?", fill: fill, ink: ink, size: 12)
                 return true
             }
             image.isTemplate = false
             return image
+        case .orange, .red, .grey:
+            break
+        }
+
+        let paintFill: NSColor
+        let paintEye: NSColor
+        switch tone {
         case .orange:
-            fill = ChiefPalette.orange
-            eye = ChiefPalette.eye
+            paintFill = IconInk.fill(working)
+            paintEye = IconInk.ink(on: paintFill)
         case .red:
-            fill = ChiefPalette.red
-            eye = ChiefPalette.eyeOnRed
+            paintFill = ChiefPalette.red
+            paintEye = ChiefPalette.eyeOnRed
         case .grey:
-            fill = ChiefPalette.grey
-            eye = ChiefPalette.eyeOnGrey
+            paintFill = ChiefPalette.grey
+            paintEye = ChiefPalette.eyeOnGrey
+        case .black, .indigo:
+            paintFill = ChiefPalette.orange
+            paintEye = ChiefPalette.eye
         }
 
         let pose = pose
         let image = NSImage(size: NSSize(width: pointSize, height: pointSize), flipped: false) { _ in
-            paint(fill: fill, eye: eye, pose: pose)
+            paint(fill: paintFill, eye: paintEye, pose: pose)
             if staleDot {
                 paintStaleDot()
             }
@@ -450,26 +474,22 @@ enum StatusIcon {
         NSBezierPath(ovalIn: NSRect(x: rightX, y: eyeY, width: eyeWidth, height: height)).fill()
     }
 
-    /// Black 404 cube or indigo "?" cube: same 16pt face, a light rim so it shows on a dark menu bar,
-    /// and the mark where the eyes go.
-    private static func paintMark(_ mark: String, fill: NSColor, rim: NSColor, size fontSize: CGFloat) {
+    /// Stale "404" cube or needs-you "?" cube: the same 16pt face in the icon colour,
+    /// with the mark where the eyes go, dark or white to suit the fill. No outline.
+    private static func paintMark(_ mark: String, fill: NSColor, ink: NSColor, size fontSize: CGFloat) {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         if let graphics = NSGraphicsContext.current {
             graphics.shouldAntialias = true
         }
         let face = NSRect(x: 1, y: 1, width: 16, height: 16)
-        let shape = NSBezierPath(roundedRect: face.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.6, yRadius: 4.6)
         fill.setFill()
-        shape.fill()
-        rim.setStroke()
-        shape.lineWidth = 1
-        shape.stroke()
+        NSBezierPath(roundedRect: face, xRadius: 5, yRadius: 5).fill()
 
         let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .heavy)
         let text = NSAttributedString(string: mark, attributes: [
             .font: font,
-            .foregroundColor: ChiefPalette.blackInk,
+            .foregroundColor: ink,
             .kern: -0.2,
         ])
         let size = text.size()
@@ -503,5 +523,57 @@ enum StatusIcon {
         let roomY = min(cy, pointSize - cy)
         guard roomX > 0, roomY > 0 else { return 1 }
         return min(1, roomX / halfW, roomY / halfH)
+    }
+}
+
+/// The icon colour from Settings, and a dark or white ink that reads on it (eyes, "404", "?").
+enum IconInk {
+    static func fill(_ working: WorkingFill) -> NSColor {
+        switch working {
+        case .palette:
+            return ChiefPalette.orange
+        case .stored:
+            let choice = IconColorSetting.load()
+            if choice.isDefault {
+                return ChiefPalette.orange
+            }
+            return choice.nsColor
+        case .colour(let fill):
+            return fill
+        }
+    }
+
+    /// Dark ink when it contrasts more with the fill than white does, otherwise white.
+    static func ink(on fill: NSColor) -> NSColor {
+        let surface = luminance(fill)
+        let dark = ratio(surface, luminance(ChiefPalette.eye))
+        let white = ratio(surface, 1)
+        return dark >= white ? ChiefPalette.eye : NSColor.white
+    }
+
+    static func luminance(_ color: NSColor) -> CGFloat {
+        guard let rgb = color.usingColorSpace(.sRGB) else {
+            return 0
+        }
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+    }
+
+    private static func channel(_ value: CGFloat) -> CGFloat {
+        if value <= 0.04045 {
+            return value / 12.92
+        }
+        let linear = (Double(value) + 0.055) / 1.055
+        return CGFloat(pow(linear, 2.4))
+    }
+
+    private static func ratio(_ lhs: CGFloat, _ rhs: CGFloat) -> CGFloat {
+        let lighter = max(lhs, rhs)
+        let darker = min(lhs, rhs)
+        return (lighter + 0.05) / (darker + 0.05)
     }
 }
