@@ -13,7 +13,11 @@ export type Starter = {
 export type IncomingPost = {
 	bot: string;
 	status: Status;
-	task: string;
+	/**
+	 * null only on a heartbeat that left task out: the feed keeps the stored working task,
+	 * and refuses the heartbeat when the bot is not working.
+	 */
+	task: string | null;
 	/** null means "the worker should fill this in". */
 	started_at: string | null;
 	/** null means "leave the stored link alone". */
@@ -81,14 +85,6 @@ export function parsePost(
 		return { ok: false, error: "status must be idle, working, failed, done, or needs_input" };
 	}
 
-	if (typeof body.task !== "string") {
-		return { ok: false, error: "task is required" };
-	}
-	const task = cleanTask(body.task);
-	if (task === null) {
-		return { ok: false, error: "task must be text, 200 characters or fewer" };
-	}
-
 	// A heartbeat is a working post that must not move the job clock.
 	// Any started_at on that post is ignored, including one the feed would otherwise reject.
 	let heartbeat = false;
@@ -100,6 +96,20 @@ export function parsePost(
 			return { ok: false, error: "heartbeat is only for a working post" };
 		}
 		heartbeat = body.heartbeat;
+	}
+
+	// A heartbeat may leave task out. It then refreshes the bot's current working task.
+	let task: string | null = null;
+	if (heartbeat && (!("task" in body) || body.task === null || body.task === undefined)) {
+		task = null;
+	} else {
+		if (typeof body.task !== "string") {
+			return { ok: false, error: "task is required" };
+		}
+		task = cleanTask(body.task);
+		if (task === null) {
+			return { ok: false, error: "task must be text, 200 characters or fewer" };
+		}
 	}
 
 	let started: string | null = null;
@@ -252,6 +262,27 @@ export function checkedTimeZone(value: string): string {
 	} catch {
 		return "UTC";
 	}
+}
+
+/** Case-insensitive key for a bot name. "chief" and "Chief" are the same bot. */
+export function nameKey(name: string): string {
+	return name.normalize("NFC").toLowerCase();
+}
+
+/** Default minutes before a quiet working row turns idle on its own. */
+export const IDLE_AFTER_DEFAULT = 20;
+
+/**
+ * IDLE_AFTER_MINUTES: a working row with no post for this long turns idle on its own.
+ * Decimals are allowed (0.5 is 30 seconds). 0 turns auto-idle off. Blank or invalid is 20.
+ * Capped at 1440 (a day). Anything above 0 is at least 0.05 (3 seconds).
+ */
+export function idleAfterMinutes(value: string | undefined): number {
+	if (value === undefined || value.trim() === "") return IDLE_AFTER_DEFAULT;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed < 0) return IDLE_AFTER_DEFAULT;
+	if (parsed === 0) return 0;
+	return Math.min(1440, Math.max(0.05, parsed));
 }
 
 export function staleMinutes(value: string): number {

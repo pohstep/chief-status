@@ -7,15 +7,23 @@
 #   export CHIEF_STATUS_BOT_COLOR="#3B82F6"                    # optional #RRGGBB
 #   ./post-status.sh Agent1 working "drafting the homepage"
 #   ./post-status.sh Agent1 needs_input "approve the homepage copy" --approval
+#   ./post-status.sh Agent1 heartbeat            # still on the current working task
 #
 # started_at is sent for "working" and "needs_input". It is the job clock.
 # The feed records last_posted_at itself, and the 404 uses that, so a long job
 # that keeps posting does not go black. done, failed and idle let the feed keep
 # the job clock, which is what today's durations are based on.
 # Those three also stop heartbeat.sh for this bot, so a later beat cannot
-# overwrite the finish. A heartbeat itself is heartbeat.sh, not this script.
+# overwrite the finish.
 #
-# STATUS is one of: idle, working, failed, done, needs_input
+# heartbeat: one ping during a long job. It refreshes last_posted_at for the bot's
+# current working task and keeps the job clock, so the feed does not turn the bot
+# idle after IDLE_AFTER_MINUTES (20 by default). Give a TASK to change the task text
+# too. The feed refuses it (409) when the bot is not working. heartbeat.sh repeats
+# this every 3 minutes in the background. Re-posting the same working task with
+# this script also keeps the job clock.
+#
+# STATUS is one of: idle, working, failed, done, needs_input, heartbeat
 #   needs_input means the bot is waiting on you.
 #   Add --approval, or set CHIEF_STATUS_APPROVAL=1, when it needs an approval
 #   rather than an answer. The task text must say exactly what is needed:
@@ -24,13 +32,22 @@
 
 set -eu
 
-if [ "$#" -lt 3 ]; then
+usage() {
 	echo "Usage: post-status.sh BOT STATUS TASK [--approval]" >&2
+	echo "       post-status.sh BOT heartbeat [TASK]" >&2
 	echo "  STATUS is idle, working, failed, done, or needs_input" >&2
 	echo "  needs_input: the task must say exactly what is needed." >&2
 	echo "  --approval (or CHIEF_STATUS_APPROVAL=1) is only for needs_input." >&2
+	echo "  heartbeat keeps the current working task fresh without moving its clock." >&2
 	echo "  Set CHIEF_STATUS_URL and CHIEF_STATUS_TOKEN first." >&2
 	exit 1
+}
+
+if [ "$#" -lt 2 ]; then
+	usage
+fi
+if [ "$#" -lt 3 ] && [ "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" != "heartbeat" ]; then
+	usage
 fi
 
 BOT=$1
@@ -58,9 +75,9 @@ for arg in "$@"; do
 done
 
 case "$STATUS" in
-idle | working | failed | done | needs_input) ;;
+idle | working | failed | done | needs_input | heartbeat) ;;
 *)
-	echo "Status must be idle, working, failed, done, or needs_input." >&2
+	echo "Status must be idle, working, failed, done, needs_input, or heartbeat." >&2
 	exit 1
 	;;
 esac
@@ -122,6 +139,14 @@ BODY=$(printf '{"bot":"%s","status":"%s","task":"%s"%s%s%s%s}' \
 	"$url_field" \
 	"$color_field" \
 	"$approval_field")
+if [ "$STATUS" = "heartbeat" ]; then
+	# A working post with "heartbeat": true. No task means "the task the feed already has".
+	task_field=""
+	if [ -n "$TASK" ]; then
+		task_field=$(printf ',"task":"%s"' "$(escape "$TASK")")
+	fi
+	BODY=$(printf '{"bot":"%s","status":"working","heartbeat":true%s}' "$(escape "$BOT")" "$task_field")
+fi
 
 case "$STATUS" in
 done | failed | idle)

@@ -25,13 +25,19 @@ head_sampling_rate = 1
 required = [ "STATUS_TOKEN" ]
 
 # BOTS is an optional starter list and order. Leave it empty: a new feed has no rows
-# until a bot posts. Optional link: Agent1|https://example.com/agent1 or BOT_URLS below.
+# until a bot posts, and a bot's first post registers it. When BOTS is set, only those
+# bots (and rows already on the feed) can post; any other name is refused with 403.
+# Names match without case, so "agent1" updates Agent1.
+# Optional link: Agent1|https://example.com/agent1 or BOT_URLS below.
 # TZ is an IANA name used for the daily job log. STALE_MINUTES marks a long working row.
 [vars]
 BOTS = ""
 BOT_URLS = ""
 TZ = "UTC"
 STALE_MINUTES = "60"
+# IDLE_AFTER_MINUTES: a working bot with no post for this long turns idle on its own.
+# needs_input never expires. 0 turns it off.
+IDLE_AFTER_MINUTES = "20"
 
 [[durable_objects.bindings]]
 name = "ROOM"

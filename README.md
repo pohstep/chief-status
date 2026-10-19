@@ -359,6 +359,8 @@ A long job can stay fresh without moving its start time. From the `worker` folde
 
 That posts `working` with the same task immediately, then every 3 minutes, and writes its process id to a file. `./scripts/heartbeat.sh stop Agent1` stops it. Posting `done`, `failed`, or `idle` with `post-status.sh` stops it too. A heartbeat refreshes the last post and does not move `started_at`.
 
+For a single ping, `./scripts/post-status.sh Agent1 heartbeat` refreshes the bot's current working task (add a task to change its text). Re-posting the same status and task also keeps `started_at`. A `working` bot with no post for `IDLE_AFTER_MINUTES` (20 by default, `0` turns it off) turns idle on its own, and live clients see it without a refresh. `needs_input` never expires.
+
 ### Remove a bot
 
 A test bot, or one you retired, stays on the feed until you remove it. From the `worker` folder, with the same two settings as above:

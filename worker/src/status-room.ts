@@ -2,8 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import {
 	checkedTimeZone,
 	dayKey,
+	idleAfterMinutes,
 	isFinished,
 	isStatus,
+	nameKey,
 	startersFrom,
 	staleMinutes,
 	type IncomingPost,
@@ -41,7 +43,13 @@ export type Snapshot = {
 	today: JobRow[];
 	stale_after_minutes: number;
 	timezone: string;
+	/** Minutes before a quiet working row turns idle on its own. 0 means off. */
+	idle_after_minutes: number;
 };
+
+export type UpsertResult =
+	| { ok: true; bot: BotRow; snapshot: Snapshot }
+	| { ok: false; status: number; error: string };
 
 type SqlRow = Record<string, string | number | null | ArrayBuffer>;
 
@@ -61,16 +69,40 @@ export class StatusRoom extends DurableObject<Env> {
 		return this.current();
 	}
 
-	async upsert(post: IncomingPost): Promise<{ bot: BotRow; snapshot: Snapshot }> {
+	async upsert(incoming: IncomingPost): Promise<UpsertResult> {
 		await this.ensureReady();
 		this.rollover();
-		const existing = this.botRow(post.bot);
+		this.expireStale();
+		const name = this.resolveName(incoming.bot);
+		if (!name) {
+			await this.scheduleExpiry();
+			return {
+				ok: false,
+				status: 403,
+				error: `unknown bot "${incoming.bot}": only bots already on this feed or listed in BOTS can post`,
+			};
+		}
+		const existing = this.botRow(name);
+		let task = incoming.task;
+		if (task === null) {
+			// A heartbeat with no task refreshes the current working task, and nothing else.
+			if (!existing || existing.status !== "working") {
+				await this.scheduleExpiry();
+				return {
+					ok: false,
+					status: 409,
+					error: `${name} is not working, so there is no task to heartbeat. Post working with a task first`,
+				};
+			}
+			task = existing.task;
+		}
+		const post: IncomingPost = { ...incoming, bot: name, task };
 		const url = post.url === null ? (existing?.url ?? "") : post.url;
 		const color = post.color === null ? (existing?.color ?? "") : post.color;
 		const row: BotRow = {
-			bot: post.bot,
+			bot: name,
 			status: post.status,
-			task: post.task,
+			task,
 			started_at: this.resolveStarted(post, existing),
 			url,
 			color,
@@ -100,20 +132,36 @@ export class StatusRoom extends DurableObject<Env> {
 		if (isFinished(row.status)) {
 			this.recordJob(row);
 		}
+		await this.scheduleExpiry();
 		const snapshot = this.readSnapshot();
 		this.broadcast(snapshot);
-		return { bot: row, snapshot };
+		return { ok: true, bot: row, snapshot };
 	}
 
-	/** Removes one bot and its jobs, then tells every live client. */
-	async remove(name: string): Promise<{ removed: boolean; jobs: number }> {
+	/** Removes one bot and its jobs, then tells every live client. The name is matched without case. */
+	async remove(rawName: string): Promise<{ removed: boolean; jobs: number; name: string }> {
 		await this.ensureReady();
 		this.rollover();
-		if (!this.botRow(name)) return { removed: false, jobs: 0 };
+		const name = this.existingName(rawName);
+		if (!name) return { removed: false, jobs: 0, name: rawName };
 		const jobs = this.ctx.storage.sql.exec("DELETE FROM jobs WHERE bot = ?", name).rowsWritten;
 		this.ctx.storage.sql.exec("DELETE FROM bots WHERE name = ?", name);
+		this.expireStale();
+		await this.scheduleExpiry();
 		this.broadcast(this.readSnapshot());
-		return { removed: true, jobs };
+		return { removed: true, jobs, name };
+	}
+
+	/**
+	 * Durable Object alarm, set for the next working row's idle deadline.
+	 * It turns quiet working rows idle and pushes the change to live clients without a read.
+	 */
+	async alarm(): Promise<void> {
+		await this.ensureReady();
+		this.rollover();
+		const changed = this.expireStale();
+		await this.scheduleExpiry();
+		if (changed > 0) this.broadcast(this.readSnapshot());
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -196,18 +244,29 @@ export class StatusRoom extends DurableObject<Env> {
 	}
 
 	/**
-	 * The job clock. A heartbeat keeps the stored start (or starts now if this bot is new)
-	 * and ignores any started_at on that post. last_posted_at still updates on every upsert.
+	 * The job clock. A heartbeat keeps the stored start of a working row (or starts now if the bot
+	 * was not working) and ignores any started_at on that post. last_posted_at still updates on every upsert.
 	 * A finish keeps the working row's start.
+	 * A re-post of the same status and the same task (idle, working or needs_input) is a heartbeat too:
+	 * it keeps the stored start even when the post carries a fresh started_at.
 	 * A working post that omits started_at, for a bot that was not already working, starts now.
 	 * A repeat of the same status keeps the stored start.
 	 */
 	private resolveStarted(post: IncomingPost, existing: BotRow | null): string {
 		if (post.heartbeat) {
-			if (existing?.started_at) return existing.started_at;
+			if (existing?.status === "working" && existing.started_at) return existing.started_at;
 			return new Date().toISOString();
 		}
 		if (isFinished(post.status) && existing?.status === "working" && existing.started_at) {
+			return existing.started_at;
+		}
+		if (
+			!isFinished(post.status) &&
+			existing &&
+			existing.status === post.status &&
+			existing.task === post.task &&
+			existing.started_at
+		) {
 			return existing.started_at;
 		}
 		if (post.started_at) return post.started_at;
@@ -243,7 +302,110 @@ export class StatusRoom extends DurableObject<Env> {
 	private async current(): Promise<Snapshot> {
 		await this.ensureReady();
 		this.rollover();
-		return this.readSnapshot();
+		const changed = this.expireStale();
+		await this.scheduleExpiry();
+		const snapshot = this.readSnapshot();
+		// Anyone else watching hears about an expiry this read found, not just the reader.
+		if (changed > 0) this.broadcast(snapshot);
+		return snapshot;
+	}
+
+	private idleAfterMs(): number {
+		const raw = (this.env as { IDLE_AFTER_MINUTES?: string }).IDLE_AFTER_MINUTES;
+		return Math.round(idleAfterMinutes(typeof raw === "string" ? raw : undefined) * 60_000);
+	}
+
+	/** When a working row last showed life: its last post, or its start on a row that never recorded one. */
+	private lastSeenMs(row: SqlRow): number {
+		const posted = typeof row.last_posted_at === "string" ? Date.parse(row.last_posted_at) : NaN;
+		if (!Number.isNaN(posted)) return posted;
+		return typeof row.started_at === "string" ? Date.parse(row.started_at) : NaN;
+	}
+
+	/**
+	 * Turns every working row with no post for IDLE_AFTER_MINUTES idle: task cleared, approval off,
+	 * started_at set to the moment it went quiet plus the window. last_posted_at is left alone,
+	 * because the bot did not post. needs_input, done, failed and idle never expire. No job is recorded.
+	 * Returns how many rows changed.
+	 */
+	private expireStale(now = Date.now()): number {
+		const limit = this.idleAfterMs();
+		if (limit <= 0) return 0;
+		const rows = this.ctx.storage.sql
+			.exec("SELECT name, started_at, last_posted_at FROM bots WHERE status = 'working'")
+			.toArray() as SqlRow[];
+		let changed = 0;
+		for (const row of rows) {
+			const seen = this.lastSeenMs(row);
+			if (Number.isNaN(seen) || now - seen < limit) continue;
+			const idleAt = new Date(Math.min(now, seen + limit)).toISOString();
+			this.ctx.storage.sql.exec(
+				"UPDATE bots SET status = 'idle', task = '', approval = 0, started_at = ? WHERE name = ? AND status = 'working'",
+				idleAt,
+				String(row.name ?? ""),
+			);
+			changed += 1;
+			console.log(JSON.stringify({ event: "status_auto_idle", bot: String(row.name ?? "") }));
+		}
+		return changed;
+	}
+
+	/** Sets the alarm for the earliest working row's idle deadline, or clears it when none is working. */
+	private async scheduleExpiry(): Promise<void> {
+		const limit = this.idleAfterMs();
+		let next = Infinity;
+		if (limit > 0) {
+			const rows = this.ctx.storage.sql
+				.exec("SELECT started_at, last_posted_at FROM bots WHERE status = 'working'")
+				.toArray() as SqlRow[];
+			for (const row of rows) {
+				const seen = this.lastSeenMs(row);
+				if (!Number.isNaN(seen)) next = Math.min(next, seen + limit);
+			}
+		}
+		try {
+			const storage = this.ctx.storage;
+			const current = await storage.getAlarm();
+			if (next === Infinity) {
+				if (current !== null) await storage.deleteAlarm();
+				return;
+			}
+			const at = Math.max(next, Date.now() + 1000);
+			if (current === null || Math.abs(current - at) > 500) await storage.setAlarm(at);
+		} catch (error) {
+			// Reads and posts still expire rows. The next one tries the alarm again.
+			console.error(
+				JSON.stringify({
+					event: "alarm_schedule_failed",
+					message: error instanceof Error ? error.message : "unknown",
+				}),
+			);
+		}
+	}
+
+	/** The stored name that matches without case, or null. */
+	private existingName(raw: string): string | null {
+		const key = nameKey(raw);
+		const rows = this.ctx.storage.sql.exec("SELECT name FROM bots ORDER BY rowid").toArray() as SqlRow[];
+		for (const row of rows) {
+			const name = String(row.name ?? "");
+			if (nameKey(name) === key) return name;
+		}
+		return null;
+	}
+
+	/**
+	 * The canonical name a post goes to. A row already on the feed wins (any case), then a BOTS entry.
+	 * When BOTS is set, any other name is unknown (null). When BOTS is empty, a new name registers itself.
+	 */
+	private resolveName(raw: string): string | null {
+		const existing = this.existingName(raw);
+		if (existing) return existing;
+		const starters = this.starters();
+		if (starters.length === 0) return raw;
+		const key = nameKey(raw);
+		const listed = starters.find((starter) => nameKey(starter.name) === key);
+		return listed ? listed.name : null;
 	}
 
 	private starters(): Starter[] {
@@ -433,6 +595,7 @@ export class StatusRoom extends DurableObject<Env> {
 			today,
 			stale_after_minutes: this.minutes(),
 			timezone: this.zone(),
+			idle_after_minutes: this.idleAfterMs() / 60_000,
 		};
 	}
 
