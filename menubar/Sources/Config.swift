@@ -214,7 +214,7 @@ enum LegacyLaunchAgent {
 }
 
 /// Version shown in Settings. The running app reads CFBundleShortVersionString.
-/// A bare `ChiefStatus --render-preview` binary has no bundle, so that path uses 1.5.0.
+/// A bare `ChiefStatus --render-preview` binary has no bundle, so that path uses 1.6.0.
 enum AppVersion {
     static var current: String {
         if let raw = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
@@ -223,10 +223,10 @@ enum AppVersion {
                 return trimmed
             }
         }
-        return "1.5.0"
+        return "1.6.0"
     }
 
-    /// `v1.5.0` and `1.5.0` are the same version.
+    /// `v1.6.0` and `1.6.0` are the same version.
     static func comparable(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("v") || text.hasPrefix("V") {
@@ -324,7 +324,7 @@ Your colour is #3B82F6.
 
 You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it. Change Agent1 and the colour to this bot's own.
 
-When you start a real job that will take more than a minute or two, post to Chief Status with curl. Skip quick chat replies and lookups.
+Working is the first step of every turn, including a voice turn. Idle is the last step, including a voice turn. Skip quick chat replies and lookups.
 
 Start of job:
 \(working)
@@ -344,7 +344,7 @@ Waiting on my approval. The task line must say exactly what to approve:
 Then always:
 \(idle)
 
-If you hand work to a background helper, post working while it runs, and done when it comes back.
+If you hand work to a background helper, post working while it runs, and idle only when every job for this bot has finished.
 Never put passwords or secrets in the task line.
 """
     }

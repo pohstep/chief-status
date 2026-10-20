@@ -1521,158 +1521,60 @@ private struct ShortcutModifier: ViewModifier {
     }
 }
 
-/// Glossy cube on a 32-unit grid. The fill is the bot's own colour.
-/// Eyes are dark on a light face and light on a dark face. Status is not the fill.
+/// Flat 2D face. The rounded square and oval eyes match the menu-bar icon and the app icon
+/// (Icon.swift, and menubar/AppIcon.iconset). The glossy cube landed in 2a47d13; this is that
+/// face with the shading, lip, highlight and shadow taken off. Every panel state uses it.
+/// needs_input draws "?". A faded working bot draws "404". Working, idle, done and failed
+/// share the same eyes. Status stays on the card. The fill is the bot's colour.
 private struct MiniFace: View {
     let status: String
     let size: CGFloat
     let fill: NSColor
 
     var body: some View {
-        let unit = size / 32
-        let lost = status == "lost"
-        let face = fill
-        let top = Color(nsColor: BotAccent.mix(face, with: .white, amount: 0.28))
-        let base = Color(nsColor: face)
-        let edge = Color(nsColor: BotAccent.mix(face, with: .black, amount: 0.22))
-        let ink = BotAccent.featureInk(face)
-        let lightFace = BotAccent.isLight(face)
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 8.5 * unit, style: .continuous)
-                .fill(edge)
-                .frame(width: size, height: size)
-            RoundedRectangle(cornerRadius: 8.5 * unit, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        stops: [
-                            .init(color: top, location: 0),
-                            .init(color: base, location: 0.55),
-                            .init(color: edge, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: size, height: 28.4 * unit)
-            Capsule()
-                .fill(lightFace ? Color.black.opacity(0.14) : Color.white.opacity(0.62))
-                .frame(width: 14 * unit, height: 3.4 * unit)
-                .offset(x: 6 * unit, y: 4 * unit)
-            if size >= 20, !lost {
-                Circle()
-                    .fill(lightFace ? Color.white.opacity(0.85) : Color.white.opacity(0.75))
-                    .frame(width: 2.6 * unit, height: 2.6 * unit)
-                    .offset(x: (24 - 1.3) * unit, y: (5.7 - 1.3) * unit)
-            }
-            features(unit, ink: ink, lightFace: lightFace)
+        let ink = BotAccent.featureInk(fill)
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 5 / 16, style: .continuous)
+                .fill(Color(nsColor: fill))
+            feature(ink: ink)
         }
-        .frame(width: size, height: size, alignment: .topLeading)
-        .shadow(color: Color.black.opacity(0.18), radius: 1.5, y: 1)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 
+    /// Eyes sit where Icon.swift puts them on the 16pt face: width 2.2, height 4.6, gap 3, centred.
+    private func openEyes(ink: Color) -> some View {
+        let eyeW = size * 2.2 / 16
+        let eyeH = size * 4.6 / 16
+        let gap = size * 3 / 16
+        return HStack(spacing: gap) {
+            Ellipse()
+                .fill(ink)
+                .frame(width: eyeW, height: eyeH)
+            Ellipse()
+                .fill(ink)
+                .frame(width: eyeW, height: eyeH)
+        }
+        .offset(y: -size * 0.12)
+    }
+
     @ViewBuilder
-    private func features(_ unit: CGFloat, ink: Color, lightFace: Bool) -> some View {
+    private func feature(ink: Color) -> some View {
         switch status {
         case "needs_input":
             Text("?")
-                .font(.system(size: 19 * unit, weight: .heavy, design: .rounded))
+                .font(.system(size: 19 * size / 32, weight: .heavy, design: .rounded))
                 .foregroundStyle(ink)
                 .lineLimit(1)
-                .fixedSize()
-                .frame(width: size, height: 28.4 * unit, alignment: .center)
         case "lost":
             Text("404")
-                .font(.system(size: max(7.5, 10.5 * unit), weight: .heavy, design: .rounded).monospacedDigit())
+                .font(.system(size: max(7.5, 10.5 * size / 32), weight: .heavy, design: .rounded).monospacedDigit())
                 .kerning(-0.2)
                 .foregroundStyle(ink)
                 .lineLimit(1)
-                .fixedSize()
-                .frame(width: size, height: 28.4 * unit, alignment: .center)
-        case "working":
-            eye(unit, cx: 11, cy: 15, radius: 2.7, catchlight: size >= 20, ink: ink, lightFace: lightFace)
-            eye(unit, cx: 21, cy: 15, radius: 2.7, catchlight: size >= 20, ink: ink, lightFace: lightFace)
-            smile(unit, start: 12.6, end: 19.4, y: 20.2, controlY: 24.6)
-                .fill(ink)
-        case "done":
-            arc(unit, startX: 8.4, endX: 13.6, y: 16.2, controlY: 12.4, width: 2.2, ink: ink)
-            arc(unit, startX: 18.4, endX: 23.6, y: 16.2, controlY: 12.4, width: 2.2, ink: ink)
-            smile(unit, start: 11.6, end: 20.4, y: 19.6, controlY: 25.4)
-                .fill(ink)
-        case "failed":
-            brow(unit, from: CGPoint(x: 8.6, y: 12.2), to: CGPoint(x: 13.2, y: 13.8), ink: ink)
-            brow(unit, from: CGPoint(x: 23.4, y: 12.2), to: CGPoint(x: 18.8, y: 13.8), ink: ink)
-            eye(unit, cx: 11, cy: 16.6, radius: 2.3, catchlight: false, ink: ink, lightFace: lightFace)
-            eye(unit, cx: 21, cy: 16.6, radius: 2.3, catchlight: false, ink: ink, lightFace: lightFace)
-            frown(unit, ink: ink)
         default:
-            idleLine(unit, cx: 11, y: 16, width: 4.4, ink: ink)
-            idleLine(unit, cx: 21, y: 16, width: 4.4, ink: ink)
-            idleLine(unit, cx: 16, y: 21.4, width: 2.8, ink: ink)
+            openEyes(ink: ink)
         }
-    }
-
-    private func eye(_ unit: CGFloat, cx: CGFloat, cy: CGFloat, radius: CGFloat, catchlight: Bool, ink: Color, lightFace: Bool) -> some View {
-        ZStack {
-            Circle()
-                .fill(ink)
-                .frame(width: radius * 2 * unit, height: radius * 2 * unit)
-            if catchlight {
-                Circle()
-                    .fill(lightFace ? Color.white : Color.black.opacity(0.35))
-                    .frame(width: 1.6 * unit, height: 1.6 * unit)
-                    .offset(x: 0.9 * unit, y: -0.9 * unit)
-            }
-        }
-        .offset(x: (cx - radius) * unit, y: (cy - radius) * unit)
-    }
-
-    private func smile(_ unit: CGFloat, start: CGFloat, end: CGFloat, y: CGFloat, controlY: CGFloat) -> Path {
-        Path { path in
-            path.move(to: CGPoint(x: start * unit, y: y * unit))
-            path.addQuadCurve(
-                to: CGPoint(x: end * unit, y: y * unit),
-                control: CGPoint(x: 16 * unit, y: controlY * unit)
-            )
-            path.closeSubpath()
-        }
-    }
-
-    private func arc(_ unit: CGFloat, startX: CGFloat, endX: CGFloat, y: CGFloat, controlY: CGFloat, width: CGFloat, ink: Color) -> some View {
-        Path { path in
-            path.move(to: CGPoint(x: startX * unit, y: y * unit))
-            path.addQuadCurve(
-                to: CGPoint(x: endX * unit, y: y * unit),
-                control: CGPoint(x: ((startX + endX) / 2) * unit, y: controlY * unit)
-            )
-        }
-        .stroke(ink, style: StrokeStyle(lineWidth: width * unit, lineCap: .round))
-    }
-
-    private func brow(_ unit: CGFloat, from: CGPoint, to: CGPoint, ink: Color) -> some View {
-        Path { path in
-            path.move(to: CGPoint(x: from.x * unit, y: from.y * unit))
-            path.addLine(to: CGPoint(x: to.x * unit, y: to.y * unit))
-        }
-        .stroke(ink, style: StrokeStyle(lineWidth: 1.8 * unit, lineCap: .round))
-    }
-
-    private func frown(_ unit: CGFloat, ink: Color) -> some View {
-        Path { path in
-            path.move(to: CGPoint(x: 12.4 * unit, y: 23.4 * unit))
-            path.addQuadCurve(
-                to: CGPoint(x: 19.6 * unit, y: 23.4 * unit),
-                control: CGPoint(x: 16 * unit, y: 20 * unit)
-            )
-        }
-        .stroke(ink, style: StrokeStyle(lineWidth: 2 * unit, lineCap: .round))
-    }
-
-    private func idleLine(_ unit: CGFloat, cx: CGFloat, y: CGFloat, width: CGFloat, ink: Color) -> some View {
-        Capsule()
-            .fill(ink)
-            .frame(width: width * unit, height: 2 * unit)
-            .offset(x: (cx - width / 2) * unit, y: (y - 1) * unit)
     }
 }
 

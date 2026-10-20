@@ -10,7 +10,7 @@ Your colour is #3B82F6.
 
 You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it. Change Agent1 and the colour to this bot's own.
 
-When you start a real job that will take more than a minute or two, post to Chief Status with curl. Skip quick chat replies and lookups.
+Working is the first step of every turn, including a voice turn. Idle is the last step, including a voice turn. Skip quick chat replies and lookups.
 
 Start of job:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"working","task":"one short line about the job","color":"#3B82F6"}'
@@ -37,7 +37,24 @@ Never put passwords or secrets in the task line.
 
 ## If the bot has this repo
 
-Paste this instead when the bot can run a script from a checkout of Chief Status. It posts only for real jobs, and it leaves quick chat replies alone. Delete the chat link lines if this bot has none.
+There is one checkout: `/workspace/chief-status`. It is a clone of this repo at the 1.6.0 line (the feed's `origin/main` once this is merged). Do not post from `/workspace/chief-status-v1.2b` or any other copy.
+
+```bash
+git clone https://github.com/pohstep/chief-status.git /workspace/chief-status
+```
+
+The posting commands, from that directory:
+
+```bash
+export CHIEF_STATUS_URL="https://chief-status.<your-subdomain>.workers.dev"
+export CHIEF_STATUS_TOKEN="the password from the deploy step"
+/workspace/chief-status/worker/scripts/post-status.sh Agent1 working "one short line about the job"
+/workspace/chief-status/worker/scripts/post-status.sh Agent1 idle ""
+```
+
+`working` is the first step of every turn, including a voice turn. It posts `working` and starts `heartbeat.sh`. `idle` is the last step, including a voice turn. It stops the heartbeat and posts `idle` only when this bot has no other live turn. A crashed turn goes idle on the feed after `IDLE_AFTER_MINUTES` (20) with no heartbeat. Leave `BOTS` empty, or list every bot (Chief, Pepper, Dingbat, Folio, Gizmo, figma bro, Quack, Xavier, Klinic, and anyone else who posts).
+
+Paste this when the bot can run that script. It posts only for real jobs, and it leaves quick chat replies alone. Delete the chat link lines if this bot has none.
 
 ```text
 Your name is Agent1.
@@ -46,7 +63,7 @@ Optional chat link: https://example.com/agent1
 
 You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it.
 
-When you take on a real job that will take more than a minute or two, report it to Chief Status. Skip quick chat replies, lookups, and anything that will be done in a few seconds.
+Working is the first step of every turn, including a voice turn. Idle is the last step, including a voice turn. Skip quick chat replies, lookups, and anything that will be done in a few seconds. The script starts the heartbeat with working and stops it with the last idle.
 
 Before each post:
 
@@ -55,24 +72,24 @@ Before each post:
   export CHIEF_STATUS_BOT_COLOR="#3B82F6"
   export CHIEF_STATUS_BOT_URL="https://example.com/agent1"
 
-At the start of the job:
+At the start of the job (this also starts the heartbeat):
 
-  ./worker/scripts/post-status.sh Agent1 working "one short line about the job"
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 working "one short line about the job"
 
-When the job finishes, post done. If it fails, post failed. Then post idle so the menu bar goes quiet:
+When the job finishes, post done. If it fails, post failed. Then post idle so the menu bar goes quiet. Idle is last, including on a voice turn. If another turn for this bot is still going, idle waits:
 
-  ./worker/scripts/post-status.sh Agent1 done "what finished"
-  ./worker/scripts/post-status.sh Agent1 idle ""
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 done "what finished"
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 idle ""
 
 Or, if it failed:
 
-  ./worker/scripts/post-status.sh Agent1 failed "what broke"
-  ./worker/scripts/post-status.sh Agent1 idle ""
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 failed "what broke"
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 idle ""
 
 When you are waiting on your person, post needs_input. The task must say exactly what you need. Add --approval when it is an approval:
 
-  ./worker/scripts/post-status.sh Agent1 needs_input "which logo?"
-  ./worker/scripts/post-status.sh Agent1 needs_input "approve the homepage copy" --approval
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 needs_input "which logo?"
+  /workspace/chief-status/worker/scripts/post-status.sh Agent1 needs_input "approve the homepage copy" --approval
 
 If you hand work to a background helper or a cloud coding agent, post working for yourself while it runs, and done when it comes back.
 

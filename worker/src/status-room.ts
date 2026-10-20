@@ -83,18 +83,20 @@ export class StatusRoom extends DurableObject<Env> {
 			};
 		}
 		const existing = this.botRow(name);
+		// A heartbeat never lights a bot. The stored row has to already be working,
+		// whether or not this post includes a task. A beat that lands after idle is a 409.
+		if (incoming.heartbeat && (!existing || existing.status !== "working")) {
+			await this.scheduleExpiry();
+			return {
+				ok: false,
+				status: 409,
+				error: `${name} is not working, so a heartbeat cannot light it again. Post working with a task first`,
+			};
+		}
 		let task = incoming.task;
 		if (task === null) {
 			// A heartbeat with no task refreshes the current working task, and nothing else.
-			if (!existing || existing.status !== "working") {
-				await this.scheduleExpiry();
-				return {
-					ok: false,
-					status: 409,
-					error: `${name} is not working, so there is no task to heartbeat. Post working with a task first`,
-				};
-			}
-			task = existing.task;
+			task = existing?.task ?? "";
 		}
 		const post: IncomingPost = { ...incoming, bot: name, task };
 		const url = post.url === null ? (existing?.url ?? "") : post.url;

@@ -14,8 +14,8 @@ export type IncomingPost = {
 	bot: string;
 	status: Status;
 	/**
-	 * null only on a heartbeat that left task out: the feed keeps the stored working task,
-	 * and refuses the heartbeat when the bot is not working.
+	 * null only on a heartbeat that left task out: the feed keeps the stored working task.
+	 * Any heartbeat is refused unless the stored row is already working, task or not.
 	 */
 	task: string | null;
 	/** null means "the worker should fill this in". */
@@ -31,6 +31,7 @@ export type IncomingPost = {
 	approval: boolean;
 	/**
 	 * A working heartbeat. The feed refreshes last_posted_at and keeps the stored started_at.
+	 * Refused unless that bot's stored row is already working, so a late beat cannot relight idle.
 	 * Omitted means false. Only valid with status working.
 	 */
 	heartbeat: boolean;

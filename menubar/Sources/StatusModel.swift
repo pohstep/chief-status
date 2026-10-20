@@ -296,11 +296,15 @@ final class StatusModel: ObservableObject {
     /// When each bot last had its failure spoken. Memory only. 10 minutes per bot.
     private var failureSpokenAt: [String: Date] = [:]
     private let failureCooldown: TimeInterval = 10 * 60
-    private let userAgent = "ChiefStatus/1.5.0"
+    private let userAgent = "ChiefStatus/1.6.0"
     private var liveTask: URLSessionWebSocketTask?
     private var liveConnected = false
     private var reconnect: Timer?
     private var ping: Timer?
+    /// Fires if a ping is not answered. A half-open socket can still accept the send.
+    private var pongDeadline: Timer?
+    /// How long a ping may go without a pong before the live socket is dropped.
+    private let pongWait: TimeInterval = 10
     private var liveToken = 0
     private var liveDrops = 0
     /// After this many failed connections in a row, the closed panel waits 60s between tries.
@@ -1066,6 +1070,8 @@ final class StatusModel: ObservableObject {
         reconnect = nil
         ping?.invalidate()
         ping = nil
+        pongDeadline?.invalidate()
+        pongDeadline = nil
         liveTask?.cancel(with: .goingAway, reason: nil)
         liveTask = nil
         liveConnected = false
@@ -1089,20 +1095,41 @@ final class StatusModel: ObservableObject {
         }
         RunLoop.main.add(ping, forMode: .common)
         self.ping = ping
+        sendLivePing()
         reschedulePoll()
     }
 
     private func sendLivePing() {
+        let token = liveToken
         liveTask?.send(.string("ping")) { [weak self] error in
             DispatchQueue.main.async {
+                guard let self = self, self.liveToken == token, self.liveTask != nil else { return }
                 if error != nil {
-                    self?.noteLiveDropped()
-                } else if self?.liveConnected == false {
-                    self?.liveConnected = true
-                    self?.reschedulePoll()
+                    self.noteLiveDropped()
+                    return
                 }
+                if !self.liveConnected {
+                    self.liveConnected = true
+                    self.reschedulePoll()
+                }
+                self.armPongDeadline()
             }
         }
+    }
+
+    /// Drop the socket if this ping is still unanswered. The server answers "ping" with "pong".
+    private func armPongDeadline() {
+        pongDeadline?.invalidate()
+        let timer = Timer(timeInterval: pongWait, repeats: false) { [weak self] _ in
+            self?.noteLiveDropped()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pongDeadline = timer
+    }
+
+    private func notePong() {
+        pongDeadline?.invalidate()
+        pongDeadline = nil
     }
 
     private func receiveLive(_ socket: URLSessionWebSocketTask, token: Int) {
@@ -1133,7 +1160,13 @@ final class StatusModel: ObservableObject {
         @unknown default:
             return
         }
-        if text == "pong" || text == "ping" || text.isEmpty { return }
+        if text == "pong" || text == "ping" {
+            if text == "pong" {
+                notePong()
+            }
+            return
+        }
+        if text.isEmpty { return }
         guard let data = text.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(LiveMessage.self, from: data),
               let bots = decoded.bots else {
@@ -1150,6 +1183,8 @@ final class StatusModel: ObservableObject {
         liveTask = nil
         ping?.invalidate()
         ping = nil
+        pongDeadline?.invalidate()
+        pongDeadline = nil
         reschedulePoll()
         refresh()
         reconnect?.invalidate()
