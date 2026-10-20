@@ -63,6 +63,12 @@ function startWorker(options = {}) {
 	if (options.readToken) {
 		args.push("--var", `READ_TOKEN:${options.readToken}`);
 	}
+	// Pin the vars the tests depend on, so a deploy config with a real bot list,
+	// time zone or windows still runs the same tests.
+	const vars = { BOTS: "", BOT_URLS: "", TZ: "UTC", STALE_MINUTES: "60", IDLE_AFTER_MINUTES: "20", ...(options.vars ?? {}) };
+	for (const [key, value] of Object.entries(vars)) {
+		args.push("--var", `${key}:${value}`);
+	}
 	const child = spawn(bin, args, {
 		cwd: workerDir,
 		env: { ...process.env, CI: "1" },
@@ -799,6 +805,7 @@ async function main() {
 		assert(liveStill.status === 426, `GET /status/live without upgrade should stay 426, was ${liveStill.status}`);
 
 		await runReadTokenTests();
+		await runRulesTests();
 
 		for (let i = 0; i < 201; i += 1) {
 			const stamp = new Date(Date.UTC(2026, 9, 18, 0, 0, i)).toISOString();
@@ -927,7 +934,7 @@ async function main() {
 		);
 		assert(beatKept.body.bot.task === "still draft", "heartbeat updates the task");
 		assert(beatKept.body.bot.color === "#3b82f6", "heartbeat keeps the stored colour");
-		const heartNewAt = Date.now();
+		const beforeHeartNew = (await request(`${base}/status`)).body.bots.map((bot) => bot.bot);
 		const heartNew = await postStatus({
 			bot: "HeartNew",
 			status: "working",
@@ -935,15 +942,14 @@ async function main() {
 			heartbeat: true,
 			started_at: "2020-01-01T00:00:00Z",
 		});
-		assert(heartNew.status === 200, `first heartbeat ${heartNew.status} ${JSON.stringify(heartNew.body)}`);
+		assert(heartNew.status === 409, `a heartbeat must not create a working row, was ${heartNew.status} ${JSON.stringify(heartNew.body)}`);
 		assert(
-			heartNew.body.bot.started_at !== "2020-01-01T00:00:00.000Z",
-			"a first heartbeat ignores the client started_at",
+			String(heartNew.body.error || "").toLowerCase().includes("not working"),
+			`heartbeat create error was ${JSON.stringify(heartNew.body)}`,
 		);
-		assert(
-			Math.abs(Date.parse(heartNew.body.bot.started_at) - heartNewAt) < 15000,
-			`a first heartbeat starts now, was ${heartNew.body.bot.started_at}`,
-		);
+		const afterHeartNew = (await request(`${base}/status`)).body.bots.map((bot) => bot.bot);
+		assert(!afterHeartNew.includes("HeartNew"), "a refused heartbeat must not add a row");
+		assert(afterHeartNew.length === beforeHeartNew.length, "a refused heartbeat must not add a row");
 		const beatIdle = await postStatus({ bot: "BeatBot", status: "idle", task: "", heartbeat: true });
 		assert(beatIdle.status === 400, `heartbeat on idle should be 400, was ${beatIdle.status}`);
 		assert(
@@ -956,13 +962,252 @@ async function main() {
 		assert(beatStill.status === "working", "a rejected heartbeat must not change the row");
 		assert(beatStill.started_at === "2020-01-01T00:00:00.000Z", "a rejected heartbeat must not move started_at");
 
+		// Open feed (BOTS empty): names still match without case, so "quietbot" is QuietBot.
+		const rowsBeforeCase = (await request(`${base}/status`)).body.bots.length;
+		const lower = await postStatus({ bot: "quietbot", status: "idle", task: "lowercase post" });
+		assert(lower.status === 200, `lowercase post ${lower.status} ${JSON.stringify(lower.body)}`);
+		assert(lower.body.bot.bot === "QuietBot", `lowercase post should keep the stored name, was ${lower.body.bot.bot}`);
+		const afterLower = (await request(`${base}/status`)).body;
+		assert(afterLower.bots.length === rowsBeforeCase, "a lowercase post must not add a row");
+		assert(!afterLower.bots.some((bot) => bot.bot === "quietbot"), "no lowercase row should appear");
+		assert(
+			afterLower.bots.find((bot) => bot.bot === "QuietBot").task === "lowercase post",
+			"the lowercase post should update QuietBot",
+		);
+		assert(afterLower.idle_after_minutes === 20, `idle_after_minutes default ${afterLower.idle_after_minutes}`);
+		await postStatus({ bot: "CaseGone", status: "idle", task: "" });
+		const delLower = await request(`${base}/status/casegone`, {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		assert(delLower.status === 200, `lowercase delete ${delLower.status} ${JSON.stringify(delLower.body)}`);
+		assert(delLower.body.deleted === "CaseGone", `lowercase delete removed ${delLower.body.deleted}`);
+		assert(
+			!(await request(`${base}/status`)).body.bots.some((bot) => bot.bot === "CaseGone"),
+			"lowercase delete should remove CaseGone",
+		);
+
+		await runOverlap(base);
 		await runHeartbeatScript(base);
 
 		console.log("feed tests passed");
 	} finally {
+		await stopHeartbeats();
 		await worker.stop();
 		if (previousDevVars === null) fs.rmSync(devVarsPath, { force: true });
 		else fs.writeFileSync(devVarsPath, previousDevVars);
+	}
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A third worker with a closed bot list and a 3-second idle window:
+ * case-insensitive names, unknown names refused, same-task heartbeat, post-status.sh heartbeat,
+ * auto-idle on read and by alarm over the live feed, needs_input never expiring.
+ */
+async function runRulesTests() {
+	const listenPort = 8895;
+	const worker = startWorker({
+		port: listenPort,
+		inspectorPort: 8896,
+		vars: { BOTS: "Alpha,Beta Bot", IDLE_AFTER_MINUTES: "0.05" },
+	});
+	const base = `http://127.0.0.1:${listenPort}`;
+	const post = (body) =>
+		request(`${base}/status`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	const feed = async () => (await request(`${base}/status`)).body;
+	const row = async (name) => (await feed()).bots.find((bot) => bot.bot === name);
+	const script = path.join(workerDir, "scripts", "post-status.sh");
+	const env = { ...process.env, CHIEF_STATUS_URL: base, CHIEF_STATUS_TOKEN: token };
+	try {
+		await worker.ready;
+		await sleep(300);
+
+		const start = await feed();
+		assert(start.bots.map((bot) => bot.bot).join(",") === "Alpha,Beta Bot", `seeded ${start.bots.map((b) => b.bot)}`);
+		assert(start.idle_after_minutes === 0.05, `idle_after_minutes ${start.idle_after_minutes}`);
+
+		// Names: case-insensitive, canonical name kept, unknown refused with no row.
+		const lower = await post({ bot: "alpha", status: "idle", task: "lower" });
+		assert(lower.status === 200, `lowercase listed bot ${lower.status} ${JSON.stringify(lower.body)}`);
+		assert(lower.body.bot.bot === "Alpha", `stored name ${lower.body.bot.bot}`);
+		const upper = await post({ bot: "BETA BOT", status: "idle", task: "upper" });
+		assert(upper.status === 200 && upper.body.bot.bot === "Beta Bot", `uppercase listed bot ${JSON.stringify(upper.body)}`);
+		const unknown = await post({ bot: "Zzztest", status: "working", task: "should be refused" });
+		assert(unknown.status === 403, `unknown bot should be 403, was ${unknown.status}`);
+		assert(String(unknown.body.error).includes("unknown bot"), `unknown bot error ${JSON.stringify(unknown.body)}`);
+		const afterNames = await feed();
+		assert(afterNames.bots.length === 2, `rows after name posts ${afterNames.bots.map((b) => b.bot)}`);
+		assert(afterNames.bots.find((b) => b.bot === "Alpha").task === "lower", "lowercase post should update Alpha");
+		const delUnknown = await request(`${base}/status/zzztest`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+		assert(delUnknown.status === 404, `deleting an unknown bot ${delUnknown.status}`);
+		const delLower = await request(`${base}/status/alpha`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+		assert(delLower.status === 200 && delLower.body.deleted === "Alpha", `lowercase delete ${JSON.stringify(delLower.body)}`);
+		const back = await post({ bot: "ALPHA", status: "idle", task: "" });
+		assert(back.status === 200 && back.body.bot.bot === "Alpha", "a listed bot can post again with its listed name");
+
+		// Same status and task: started_at kept even with a fresh started_at, last_posted_at moves.
+		const t0 = new Date(Date.now() - 1000).toISOString();
+		const w1 = await post({ bot: "Alpha", status: "working", task: "same task", started_at: t0 });
+		assert(w1.status === 200, `working ${w1.status}`);
+		await sleep(60);
+		const w2 = await post({ bot: "Alpha", status: "working", task: "same task", started_at: new Date().toISOString() });
+		assert(w2.body.bot.started_at === w1.body.bot.started_at, `same-task re-post moved started_at to ${w2.body.bot.started_at}`);
+		assert(Date.parse(w2.body.bot.last_posted_at) > Date.parse(w1.body.bot.last_posted_at), "same-task re-post refreshes last_posted_at");
+
+		// post-status.sh heartbeat: no task keeps the task, keeps the clock, moves last_posted_at.
+		await sleep(60);
+		const beat = await exec(script, ["alpha", "heartbeat"], { env, timeout: 15000 });
+		assertNoToken(beat, "post-status heartbeat");
+		assert(beat.stdout.includes('"ok":true'), `heartbeat output ${beat.stdout}`);
+		const beaten = await row("Alpha");
+		assert(beaten.status === "working" && beaten.task === "same task", `heartbeat row ${JSON.stringify(beaten)}`);
+		assert(beaten.started_at === w1.body.bot.started_at, "post-status heartbeat keeps started_at");
+		assert(Date.parse(beaten.last_posted_at) > Date.parse(w2.body.bot.last_posted_at), "post-status heartbeat moves last_posted_at");
+		const beatText = await exec(script, ["Alpha", "heartbeat", "new", "words"], { env, timeout: 15000 });
+		assert(beatText.stdout.includes('"task":"new words"'), `heartbeat with task ${beatText.stdout}`);
+		assert((await row("Alpha")).started_at === w1.body.bot.started_at, "heartbeat with a task keeps started_at");
+		let refused = false;
+		try {
+			await exec(script, ["Beta Bot", "heartbeat"], { env, timeout: 15000 });
+		} catch (error) {
+			refused = true;
+			assert(String(error.stdout).includes("not working"), `idle heartbeat said ${error.stdout}`);
+		}
+		assert(refused, "a heartbeat for a bot that is not working should fail");
+		assert((await row("Beta Bot")).status === "idle", "a refused heartbeat leaves the row alone");
+		const rawBeat = await post({ bot: "Beta Bot", status: "working", heartbeat: true });
+		assert(rawBeat.status === 409, `taskless heartbeat on idle should be 409, was ${rawBeat.status}`);
+		const rawBeatTask = await post({ bot: "Beta Bot", status: "working", task: "late", heartbeat: true });
+		assert(rawBeatTask.status === 409, `heartbeat with a task on idle should be 409, was ${rawBeatTask.status}`);
+		const betaAfterLate = await row("Beta Bot");
+		assert(betaAfterLate.status === "idle", "a heartbeat with a task must not relight an idle bot");
+		assert(betaAfterLate.task === "upper", `a refused heartbeat changed the task to ${betaAfterLate.task}`);
+
+		// Auto-idle on read: a working row quiet for the window reads as idle, with no job recorded.
+		const jobsBefore = (await feed()).today.length;
+		const quiet = await post({ bot: "Beta Bot", status: "working", task: "goes quiet" });
+		await sleep(3600);
+		const expired = await row("Beta Bot");
+		assert(expired.status === "idle", `quiet working row should be idle, was ${expired.status}`);
+		assert(expired.task === "", `auto-idle clears the task, was ${expired.task}`);
+		assert(expired.last_posted_at === quiet.body.bot.last_posted_at, "auto-idle keeps last_posted_at");
+		assert(Date.parse(expired.started_at) >= Date.parse(quiet.body.bot.last_posted_at) + 2900, "idle clock starts when the window ran out");
+		assert((await feed()).today.length === jobsBefore, "auto-idle records no job");
+		assert((await row("Alpha")).status === "idle", "Alpha went quiet too");
+
+		// needs_input never expires.
+		await post({ bot: "Alpha", status: "needs_input", task: "which logo?" });
+		await sleep(3600);
+		const asking = await row("Alpha");
+		assert(asking.status === "needs_input" && asking.task === "which logo?", `needs_input expired: ${JSON.stringify(asking)}`);
+
+		// Auto-idle by alarm: a live client hears the change with no read in between.
+		const pushed = await new Promise((resolve, reject) => {
+			const ws = new WebSocket(`${base.replace("http", "ws")}/status/live`);
+			let posted = false;
+			const timer = setTimeout(() => {
+				ws.close();
+				reject(new Error("the live feed never pushed the auto-idle"));
+			}, 15000);
+			ws.addEventListener("error", () => {
+				clearTimeout(timer);
+				reject(new Error("websocket error"));
+			});
+			ws.addEventListener("message", (event) => {
+				const message = JSON.parse(String(event.data));
+				const beta = message.bots.find((bot) => bot.bot === "Beta Bot");
+				if (!posted) {
+					posted = true;
+					post({ bot: "Beta Bot", status: "working", task: "alarm job" });
+					return;
+				}
+				if (beta && beta.status === "idle" && beta.task === "") {
+					clearTimeout(timer);
+					ws.close();
+					resolve(message);
+				}
+			});
+		});
+		const pushedAlpha = pushed.bots.find((bot) => bot.bot === "Alpha");
+		assert(pushedAlpha.status === "needs_input", "the alarm must not touch needs_input");
+	} finally {
+		await stopHeartbeats();
+		await worker.stop();
+	}
+}
+
+async function stopHeartbeats() {
+	try {
+		await exec("pkill", ["-f", "scripts/heartbeat.sh"]);
+	} catch {
+		// nothing to stop
+	}
+}
+
+/** Two turns on one bot: idle and done wait until the last turn ends. */
+async function runOverlap(base) {
+	const script = path.join(workerDir, "scripts", "post-status.sh");
+	const beat = path.join(workerDir, "scripts", "heartbeat.sh");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chief-turns-"));
+	const env = {
+		...process.env,
+		CHIEF_STATUS_URL: base,
+		CHIEF_STATUS_TOKEN: token,
+		CHIEF_STATUS_HEARTBEAT_DIR: dir,
+		CHIEF_STATUS_HEARTBEAT_SECONDS: "3600",
+	};
+	const row = async () =>
+		(await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "Overlap");
+	const pidFile = path.join(dir, "Overlap.pid");
+	try {
+		const first = await exec(script, ["Overlap", "working", "first"], { env, timeout: 15000 });
+		assertNoToken(first, "overlap working");
+		assert(first.stdout.includes('"ok":true'), `first working ${first.stdout}`);
+		const second = await exec(script, ["Overlap", "working", "second"], { env, timeout: 15000 });
+		assertNoToken(second, "overlap second working");
+		const both = await row();
+		assert(both.status === "working" && both.task === "second", `two turns ${JSON.stringify(both)}`);
+		assert(fs.existsSync(pidFile), "working should start heartbeat.sh");
+
+		const doneHeld = await exec(script, ["Overlap", "done", "first finished"], { env, timeout: 15000 });
+		assertNoToken(doneHeld, "overlap held done");
+		assert(doneHeld.stdout.includes('"skipped":"done"'), `done should wait, was ${doneHeld.stdout}`);
+		assert((await row()).status === "working", "done must not clear a bot that still has a live turn");
+		assert(fs.existsSync(pidFile), "heartbeat should keep running after a held done");
+
+		const held = await exec(script, ["Overlap", "idle", ""], { env, timeout: 15000 });
+		assertNoToken(held, "overlap held idle");
+		assert(held.stdout.includes('"skipped":"idle"'), `first idle should wait, was ${held.stdout}`);
+		const mid = await row();
+		assert(mid.status === "working", `bot went idle while a turn was live: ${JSON.stringify(mid)}`);
+		assert(fs.existsSync(pidFile), "heartbeat should keep running while a turn is live");
+
+		const released = await exec(script, ["Overlap", "idle", ""], { env, timeout: 15000 });
+		assertNoToken(released, "overlap final idle");
+		assert(!released.stdout.includes('"skipped"'), `last idle should post, was ${released.stdout}`);
+		const ended = await row();
+		assert(ended.status === "idle", `last idle should grey the bot, was ${ended.status}`);
+		assert(!fs.existsSync(pidFile), "idle should stop heartbeat.sh");
+
+		const late = await request(`${base}/status`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ bot: "Overlap", status: "working", task: "relight", heartbeat: true }),
+		});
+		assert(late.status === 409, `overlap late heartbeat ${late.status}`);
+		assert((await row()).status === "idle", "late heartbeat must not relight Overlap");
+	} finally {
+		try {
+			await exec(beat, ["stop", "Overlap"], { env, timeout: 5000 });
+		} catch {
+			// already stopped
+		}
 	}
 }
 
@@ -1015,7 +1260,7 @@ async function runHeartbeatScript(base) {
 			listed.started_at === "2020-01-01T00:00:00.000Z",
 			`heartbeat.sh moved started_at to ${listed.started_at}`,
 		);
-		assert(listed.task === "draft", `heartbeat.sh task was ${listed.task}`);
+		assert(listed.task === "still draft", `heartbeat.sh must not send a task, was ${listed.task}`);
 		assert(listed.color === "#3b82f6", "heartbeat.sh should keep the stored colour");
 		assert(fs.existsSync(pidFile), "heartbeat pid file missing");
 		const pid = Number(String(fs.readFileSync(pidFile, "utf8")).trim());
@@ -1042,6 +1287,15 @@ async function runHeartbeatScript(base) {
 		await waitUntilDead(pid2);
 		const afterIdle = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot");
 		assert(afterIdle.status === "idle", `post-status should leave BeatBot idle, was ${afterIdle.status}`);
+		const late = await request(`${base}/status`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ bot: "BeatBot", status: "working", task: "relight", heartbeat: true }),
+		});
+		assert(late.status === 409, `late heartbeat should be 409, was ${late.status} ${JSON.stringify(late.body)}`);
+		const stillIdle = (await request(`${base}/status`)).body.bots.find((bot) => bot.bot === "BeatBot");
+		assert(stillIdle.status === "idle", "a late heartbeat must leave the bot idle");
+		assert(stillIdle.task === "paused", `a late heartbeat changed the task to ${stillIdle.task}`);
 	} finally {
 		try {
 			await exec(script, ["stop", "BeatBot"], { env, timeout: 5000 });
@@ -1051,6 +1305,15 @@ async function runHeartbeatScript(base) {
 	}
 }
 
+/** The deploy config keeps a 20-minute auto-idle window. */
+function checkConfig() {
+	const toml = fs.readFileSync(path.join(workerDir, "wrangler.toml"), "utf8");
+	const match = /^IDLE_AFTER_MINUTES\s*=\s*"([^"]*)"/m.exec(toml);
+	assert(match && match[1] === "20", `wrangler.toml IDLE_AFTER_MINUTES should be "20", was ${match && match[1]}`);
+	assert(/BOTS\s*=\s*""/.test(toml), 'wrangler.toml BOTS should stay ""');
+}
+
+checkConfig();
 main().catch((error) => {
 	console.error(error);
 	process.exit(1);

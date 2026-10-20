@@ -64,7 +64,7 @@ There are three parts:
 
 ## Download and install
 
-1. Download `Chief-Status-1.5.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer.
+1. Download `Chief-Status-1.5.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer. The app in this repo is 1.6.0. The published disk image stays 1.5.0 until a 1.6.0 image is built on a Mac (`./packaging/make-dmg.sh`).
    - **Or, with Homebrew:** `brew install --cask pohstep/tap/chief-status`. This puts **Chief Status** in Applications for you, so skip step 2 and go to step 3.
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
@@ -75,7 +75,7 @@ There are three parts:
 5. Paste your feed address (from [Set up the feed](#set-up-the-feed)) and click **Save**. If you have no feed yet, click **No feed yet? Set one up**, or **Deploy to Cloudflare**.
 6. To have it start every time you log in, click the cube, open **Settings**, and turn on **Open at login**. You can also add it under **System Settings → General → Login Items**. That switch is the only login control. `./install.sh` does not register one. The app removes an older LaunchAgent (`com.chiefstatus.menubar`) on launch, so a previous install cannot keep starting it after the switch is off.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.5.0](CHANGELOG.md#v150--2026-10-18).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md). Latest: [v1.6.0](CHANGELOG.md#v160--2026-10-20).
 
 Terminal users can install the same disk image with Homebrew. See [Install with Homebrew](#install-with-homebrew).
 
@@ -276,7 +276,7 @@ Your colour is #3B82F6.
 
 You cannot see your own colour. It is written here so you can pass it on. The panel fills your face with it. Change Agent1 and the colour to this bot's own.
 
-When you start a real job that will take more than a minute or two, post to Chief Status with curl. Skip quick chat replies and lookups.
+Working is the first step of every turn, including a voice turn. Idle is the last step, including a voice turn. Skip quick chat replies and lookups.
 
 Start of job:
 curl -sS -X POST "https://chief-status.<your-subdomain>.workers.dev/status" -H "Authorization: Bearer the-password" -H "Content-Type: application/json" -d '{"bot":"Agent1","status":"working","task":"one short line about the job","color":"#3B82F6"}'
@@ -300,9 +300,11 @@ If you hand work to a background helper or a cloud coding agent, post working fo
 Never put passwords or secrets in the task line.
 ```
 
-That's it. **The first time a bot posts, it shows up in the panel by itself**, with its name and colour. You don't have to add it anywhere first. `BOTS` does not have to list it.
+That's it. **The first time a bot posts, it shows up in the panel by itself**, with its name and colour. You don't have to add it anywhere first. `BOTS` does not have to list it. Leave `BOTS` empty. If you do set it, list every bot, because any other name is refused.
 
-A bot that has this repo on its computer can use `worker/scripts/post-status.sh` instead of `curl`. That version, plus colours and chat links, is in [docs/BOT-SETUP.md](docs/BOT-SETUP.md).
+**Working is the first step of every turn, including a voice turn. Idle is the last step, including a voice turn.**
+
+A bot on the shared machine uses one checkout, `/workspace/chief-status`, and `worker/scripts/post-status.sh`. Do not use an older copy such as `chief-status-v1.2b`. The script posts `working` and starts `heartbeat.sh` as the first step. It posts `idle` and stops the heartbeat only when that bot has no other live turn. A heartbeat sends no task, and the feed refuses it unless the bot is already working, so a late beat cannot light the icon again. The full prompt is in [docs/BOT-SETUP.md](docs/BOT-SETUP.md).
 
 Settings also shows a `chiefstatus://setup?feed=…&password=…` link. Opening it on this Mac fills in the feed address and the post password. Add `&token=` with the read token when the feed is locked. The app then saves that token, so the first read works. Leave `token` off and a token already saved on this Mac stays as it is. The link and the prompt both carry the password, and the link carries the read token when one is filled in. The app only shows or copies them. It does not save the password, and it does not write the link to the log.
 
@@ -351,13 +353,19 @@ The status can be `working`, `done`, `failed`, `idle` or `needs_input`. `needs_i
 ./scripts/post-status.sh Agent1 needs_input "approve the homepage copy" --approval
 ```
 
-A long job can stay fresh without moving its start time. From the `worker` folder:
+A `working` post starts a heartbeat for that bot. From the `worker` folder, the same loop can be started on its own:
 
 ```bash
-./scripts/heartbeat.sh Agent1 "the task"
+./scripts/post-status.sh Agent1 working "drafting the homepage"
+./scripts/heartbeat.sh start Agent1
+./scripts/heartbeat.sh stop Agent1
 ```
 
-That posts `working` with the same task immediately, then every 3 minutes, and writes its process id to a file. `./scripts/heartbeat.sh stop Agent1` stops it. Posting `done`, `failed`, or `idle` with `post-status.sh` stops it too. A heartbeat refreshes the last post and does not move `started_at`.
+`heartbeat.sh` posts `working` with `"heartbeat": true` and no task, immediately and then every 3 minutes, and writes its process id to a file. The feed keeps the stored task and `started_at`. It answers 409 if that bot is not already working, so a beat that arrives after idle does not light the icon. A task typed after the bot name is ignored. `post-status.sh` stops the loop on idle, when no other turn for that bot is still live. `done` and `failed` stop it only when this is the only live turn.
+
+`./scripts/post-status.sh Agent1 heartbeat` is one ping with no task (add a task only to change the text while the bot is working). Re-posting the same status and task also keeps `started_at`. A `working` bot with no post for `IDLE_AFTER_MINUTES` (20 by default, `0` turns it off) turns idle on its own, and live clients see it without a refresh. `needs_input` never expires.
+
+Two turns for one bot both post `working`. The first `idle` does not clear the row. The icon goes grey when the last turn posts `idle`.
 
 ### Remove a bot
 

@@ -82,14 +82,15 @@ async function deleteBot(request: Request, env: Env, rawName: string): Promise<R
 		return json({ error: "bad bot name" }, 400);
 	}
 
+	// The name is matched without case. The reply names the row that was removed.
 	const result = await env.ROOM.getByName("feed").remove(name);
 	if (!result.removed) {
 		return json({ error: "no such bot" }, 404);
 	}
 
-	console.log(JSON.stringify({ event: "status_delete", bot: name, jobs: result.jobs }));
+	console.log(JSON.stringify({ event: "status_delete", bot: result.name, jobs: result.jobs }));
 
-	return json({ ok: true, deleted: name, jobs_removed: result.jobs });
+	return json({ ok: true, deleted: result.name, jobs_removed: result.jobs });
 }
 
 async function live(request: Request, env: Env): Promise<Response> {
@@ -126,6 +127,10 @@ async function postStatus(request: Request, env: Env): Promise<Response> {
 	}
 
 	const saved = await env.ROOM.getByName("feed").upsert(parsed.post);
+	if (!saved.ok) {
+		console.log(JSON.stringify({ event: "status_rejected", status: saved.status }));
+		return json({ error: saved.error }, saved.status);
+	}
 
 	console.log(
 		JSON.stringify({

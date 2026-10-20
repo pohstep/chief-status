@@ -1,15 +1,19 @@
 #!/bin/sh
-# Keep a working bot's last post fresh without moving the job clock.
+# Keep a working bot's last post fresh without moving the job clock,
+# and without turning an idle bot back to working.
 #
 #   export CHIEF_STATUS_URL="https://chief-status.<your-subdomain>.workers.dev"
 #   export CHIEF_STATUS_TOKEN="the password you gave the worker"
-#   ./heartbeat.sh Agent1 "drafting the homepage"
+#   ./heartbeat.sh start Agent1
 #   ./heartbeat.sh stop Agent1
 #
+# post-status.sh starts this with a working post and stops it with idle.
 # The first post goes out immediately, then every 3 minutes
 # (CHIEF_STATUS_HEARTBEAT_SECONDS). The body is status working with
-# "heartbeat": true, so the feed refreshes last_posted_at and keeps started_at.
-# post-status.sh stops this when it posts done, failed, or idle for the same bot.
+# "heartbeat": true and no task, so the feed refreshes last_posted_at,
+# keeps the stored task, and refuses the beat (409) unless that row is
+# already working. A task on the command line is ignored, so an old
+# command cannot relight a bot by sending one.
 # The process id is stored under
 # ${CHIEF_STATUS_HEARTBEAT_DIR:-${TMPDIR:-/tmp}/chief-status-heartbeats}/<bot>.pid
 # This script never prints the token.
@@ -19,8 +23,9 @@ set -eu
 SCRIPT=$0
 
 usage() {
-	echo "Usage: heartbeat.sh BOT TASK" >&2
+	echo "Usage: heartbeat.sh start BOT" >&2
 	echo "       heartbeat.sh stop BOT" >&2
+	echo "  A task after the bot name is ignored." >&2
 	echo "  Set CHIEF_STATUS_URL and CHIEF_STATUS_TOKEN first." >&2
 	exit 1
 }
@@ -93,9 +98,8 @@ post_once() {
 	*/status) URL=$BASE ;;
 	*) URL="$BASE/status" ;;
 	esac
-	BODY=$(printf '{"bot":"%s","status":"working","task":"%s","heartbeat":true}' \
-		"$(escape "$BOT")" \
-		"$(escape "$TASK")")
+	# No task. The feed keeps the stored working task, and rejects the beat if the bot is idle.
+	BODY=$(printf '{"bot":"%s","status":"working","heartbeat":true}' "$(escape "$BOT")")
 	curl -sS -o /dev/null -X POST "$URL" \
 		-H "Authorization: Bearer ${CHIEF_STATUS_TOKEN}" \
 		-H "Content-Type: application/json" \
@@ -127,13 +131,11 @@ require_env() {
 
 if [ "${1:-}" = "--loop" ]; then
 	shift
-	if [ "$#" -lt 2 ]; then
+	if [ "$#" -lt 1 ]; then
 		exit 1
 	fi
 	require_env
 	BOT=$1
-	shift
-	TASK=$*
 	run_loop
 	exit 0
 fi
@@ -146,17 +148,19 @@ if [ "${1:-}" = "stop" ]; then
 	exit 0
 fi
 
-if [ "$#" -lt 2 ]; then
+if [ "${1:-}" = "start" ]; then
+	shift
+fi
+
+if [ "$#" -lt 1 ]; then
 	usage
 fi
 
 require_env
 BOT=$1
-shift
-TASK=$*
 end_bot "$BOT"
 mkdir -p "$(heartbeat_dir)"
 file=$(pid_path "$BOT")
-nohup "$SCRIPT" --loop "$BOT" "$TASK" >/dev/null 2>&1 &
+nohup "$SCRIPT" --loop "$BOT" >/dev/null 2>&1 &
 printf '%s\n' "$!" > "$file"
 exit 0

@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.6.0 — 2026-10-20
+
+In plain words:
+
+- **The icon stays lit for the whole job, including a voice turn.** Working is the first step. Idle is the last step. `post-status.sh` starts `heartbeat.sh` with working and stops it with idle.
+- **A late heartbeat cannot light an idle bot.** The feed refuses any `heartbeat: true` post unless that bot's stored row is already working, even if the post includes a task. `heartbeat.sh` sends no task.
+- **Overlapping jobs.** One bot can have several turns at once. The menu bar goes grey only when the last one ends. The count is files in the heartbeat folder, not a second feed row.
+- **A quiet working bot still goes idle on its own** after `IDLE_AFTER_MINUTES` (20). That covers a crashed turn, including one that never reached idle.
+- **The Mac app reconnects** if a live-socket ping gets no pong within about 10 seconds. The menu bar icon order is unchanged. No new sounds, switches, or notifications.
+- **Panel faces are flat again.** The glossy cube on each bot in the panel came in with v1.2 (`2a47d13`). Working, idle, done, and failed use the same flat rounded square and oval eyes as the app icon. Needs-you is still **?**. Maybe-stale is still **404**. The menu bar cube is unchanged.
+- **One checkout.** Bots post from `/workspace/chief-status`. `BOTS` stays empty. If you fill it in, list every bot, or new names are refused.
+- The app version is 1.6.0. The Homebrew cask stays on the 1.5.0 disk image until a 1.6.0 image is published.
+
+Details:
+
+- Worker: `upsert` returns 409 for `heartbeat: true` when the stored row is missing or not `working`, with or without `task`. The row is not created and not rewritten. A heartbeat that is already working still refreshes `last_posted_at`, keeps `started_at`, and keeps the stored task when `task` is omitted. Tests cover a task on an idle row, a heartbeat that would create a row, and a beat after idle.
+- `worker/scripts/heartbeat.sh` posts `{"status":"working","heartbeat":true}` and no task. `start BOT` starts the loop. A trailing task is ignored. `stop BOT` is unchanged. The script does not print the token.
+- `worker/scripts/post-status.sh` records one turn file per `working` post and removes one on `idle`. Idle is posted, and the heartbeat is stopped, only at zero. `done` and `failed` are posted only when fewer than two turns are live, so one finish cannot clear a bot that is still working. A turn file older than `CHIEF_STATUS_TURN_TTL_SECONDS` (1200, same as 20 minutes) stops counting, so a crashed turn does not block idle forever.
+- App: after each ping, a 10 second timer drops the socket if no `pong` arrived. Polling starts again until the next connection. User-Agent `ChiefStatus/1.6.0`. `CFBundleVersion` 7.
+- `BOTS` in `worker/wrangler.toml` stays `""`.
+
 ## v1.5.0 — 2026-10-18
 
 In plain words:
