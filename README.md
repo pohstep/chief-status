@@ -17,8 +17,7 @@
   <a href="#teach-your-bots-to-report"><b>Set up your bots</b></a> &nbsp;·&nbsp;
   <a href="#read-token"><b>Read token</b></a> &nbsp;·&nbsp;
   <a href="#install-with-homebrew"><b>Homebrew</b></a> &nbsp;·&nbsp;
-  <a href="#build-it-yourself"><b>Build it yourself</b></a> &nbsp;·&nbsp;
-  <a href="#support"><b>Support</b></a>
+  <a href="#build-it-yourself"><b>Build it yourself</b></a>
 </p>
 
 <p align="center">
@@ -64,7 +63,7 @@ There are three parts:
 
 ## Download and install
 
-1. Download `Chief-Status-1.5.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer. The app in this repo is 1.6.0. The published disk image stays 1.5.0 until a 1.6.0 image is built on a Mac (`./packaging/make-dmg.sh`).
+1. Download `Chief-Status-1.6.0.dmg` from the [latest release](https://github.com/pohstep/chief-status/releases/latest). The same file runs on Apple silicon and Intel. macOS 13 or newer.
    - **Or, with Homebrew:** `brew install --cask pohstep/tap/chief-status`. This puts **Chief Status** in Applications for you, so skip step 2 and go to step 3.
 2. Open the `.dmg` file and drag **Chief Status** onto the **Applications** folder next to it.
 3. Open **Chief Status** from Applications. The first time, macOS stops it and says *"Apple could not verify…"*. That is because the app is free and not signed with a paid Apple developer account ([why](#why-does-macos-warn-me)). Let it through once:
@@ -84,13 +83,13 @@ Terminal users can install the same disk image with Homebrew. See [Install with 
 Each release lists the SHA-256 of its disk image. The disk image is built with `./packaging/make-dmg.sh` from the tagged commit. In Terminal, in the folder you downloaded to:
 
 ```bash
-shasum -a 256 Chief-Status-1.5.0.dmg
+shasum -a 256 Chief-Status-1.6.0.dmg
 ```
 
-For v1.5.0 it must print:
+For v1.6.0 it must print:
 
 ```
-09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e  Chief-Status-1.5.0.dmg
+39af3fac45ba22edc701bc57f3b774877a66e9f997097324d8557dc81e7e0958  Chief-Status-1.6.0.dmg
 ```
 
 The release page and the Homebrew cask list the same value. If a download's checksum does not match, delete the file and download it again.
@@ -510,7 +509,7 @@ brew tap pohstep/tap
 brew install --cask chief-status
 ```
 
-The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.5.0.dmg`. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`. Its `sha256` is `09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e`, the same as on the release page.
+The tap lives at [pohstep/homebrew-tap](https://github.com/pohstep/homebrew-tap). Its cask downloads the release `Chief-Status-1.6.0.dmg`. A copy of the recipe is in this repo at `packaging/homebrew/Casks/chief-status.rb`. Its `sha256` is `39af3fac45ba22edc701bc57f3b774877a66e9f997097324d8557dc81e7e0958`, the same as on the release page.
 
 The cask installs **Chief Status** into `/Applications` and quits the app before an uninstall. The app is unsigned. The first time macOS blocks it:
 
@@ -596,20 +595,6 @@ The README images are drawn by `python3 docs/render-demo.py` (needs Pillow and N
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).
-
-## Support
-
-Chief Status is free and open source. If it saves you time, a dollar is appreciated, never expected.
-
-| Chain | Address |
-| --- | --- |
-| Ethereum | `0x13073220a7f565a6690466e4c73Cdf960b89767E` |
-| Polygon | `0x13073220a7f565a6690466e4c73Cdf960b89767E` |
-| Bitcoin | `bc1qp33c2ltr9l56gr0qhkydwhrs659ex87l8xhu5t` |
-
-Send only on the matching network.
-
-A star, a bug report or a suggestion helps just as much.
 
 ## About
 

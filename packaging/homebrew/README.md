@@ -2,7 +2,7 @@
 
 This folder is the recipe for installing the release disk image. It is not the tap itself.
 
-Copy `Casks/chief-status.rb` into the public repo `pohstep/homebrew-tap` (that repo is separate from this one). Its `sha256` must match `Chief-Status-1.5.0.dmg` on the GitHub release. For v1.5.0 that is `09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e`. For a new release, put in the checksum that `./packaging/make-dmg.sh` prints.
+Copy `Casks/chief-status.rb` into the public repo `pohstep/homebrew-tap` (that repo is separate from this one). Its `sha256` must match `Chief-Status-1.6.0.dmg` on the GitHub release. For v1.6.0 that is `39af3fac45ba22edc701bc57f3b774877a66e9f997097324d8557dc81e7e0958`. For a new release, put in the checksum that `./packaging/make-dmg.sh` prints.
 
 The old `--HEAD` formula, which rebuilt the app from source, is gone. The cask installs the `.dmg`.
 

@@ -1,8 +1,8 @@
 cask "chief-status" do
-  version "1.5.0"
+  version "1.6.0"
 
-  # SHA-256 of Chief-Status-1.5.0.dmg on the v1.5.0 release.
-  sha256 "09963100ddba0a8b0c01f97dcc8f9e23c1de85deaf91323cc71e13f4eb70263e"
+  # SHA-256 of Chief-Status-1.6.0.dmg on the v1.6.0 release.
+  sha256 "39af3fac45ba22edc701bc57f3b774877a66e9f997097324d8557dc81e7e0958"
   url "https://github.com/pohstep/chief-status/releases/download/v#{version}/Chief-Status-#{version}.dmg"
 
   name "Chief Status"
